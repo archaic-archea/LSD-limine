@@ -10,7 +10,7 @@ _start:
 	la sp, stack_top
 	mv fp, sp
 
-	j kinit
+	j kmain
 
 finish:
 	j finish
