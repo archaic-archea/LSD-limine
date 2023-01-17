@@ -4,6 +4,8 @@
 use core::panic::PanicInfo;
 
 pub extern "C" fn kmain() -> ! {
+    putchar('A');
+    
     loop {
     }
 }
