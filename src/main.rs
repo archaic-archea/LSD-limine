@@ -4,8 +4,8 @@
 use core::panic::PanicInfo;
 
 pub extern "C" fn kmain() -> ! {
-    putchar('A');
-    
+    putchar('A' as u8);
+
     loop {
     }
 }
@@ -17,7 +17,7 @@ pub fn panic(_info: &PanicInfo) -> ! {
 
 /// Not sure how SBI calls work
 /// TODO: Figure it out
-pub fn putchar(character: char) {
+pub fn putchar(_character: u8) {
     unsafe {
         core::arch::asm!(
             "li a6, 0",
