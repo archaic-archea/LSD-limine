@@ -10,7 +10,7 @@ enum Command {
 }
 
 fn build_kernel() -> anyhow::Result<()> {
-    let _dir = xshell::pushd("./bare-bones");
+    let _dir = xshell::pushd("./LSD");
     xshell::cmd!("cargo build --release").run()?;
 
     Ok(())
@@ -31,6 +31,11 @@ fn main() -> anyhow::Result<()> {
                 false => &[],
             };
 
+            xshell::cmd!("rm -rf root/boot").run()?;
+            xshell::cmd!("mkdir -p root/boot").run()?;
+            xshell::cmd!("cp config/spark.cfg root/boot").run()?;
+            xshell::cmd!("cp LSD/target/riscv64gc-unknown-none-elf/release/lsd root/boot").run()?;
+
             #[rustfmt::skip]
             xshell::cmd!("
                 qemu-system-riscv64
@@ -39,7 +44,9 @@ fn main() -> anyhow::Result<()> {
                     -smp 1
                     -m 128M
                     -bios opensbi-riscv64-generic-fw_jump.bin
-                    -kernel bare-bones/target/riscv64gc-unknown-none-elf/release/bare_bones
+                    -kernel config/spark-riscv-sbi-release.bin
+                    -device nvme,serial=deadbeff,drive=disk1
+                    -drive id=disk1,format=raw,if=none,file=fat:rw:./root
                     -serial mon:stdio
                     -nographic
                     {debug_log...}

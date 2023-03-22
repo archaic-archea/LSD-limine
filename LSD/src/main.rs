@@ -2,18 +2,10 @@
 #![no_std]
 #![no_main]
 
+pub static MEM_MAP: limine::LimineMemmapRequest = limine::LimineMemmapRequest::new(0);
+
 extern "C" fn kmain(hart_id: usize, _fdt_ptr: *const u8) -> ! {
-    let uart_data = 0x1000_0000 as *mut u8;
-
-    if hart_id == 0 {
-        for c in b"We're hart 0!\n" {
-            unsafe { uart_data.write_volatile(*c) };
-        }
-    }
-
-    for c in b"Hello, world!\n" {
-        unsafe { uart_data.write_volatile(*c) };
-    }
+    lsd::print!("Blah");
 
     wfi_loop()
 }
@@ -31,8 +23,6 @@ unsafe extern "C" fn _boot() -> ! {
         .option norelax
         lla gp, __global_pointer$
         .option pop
-
-        lla sp, __tmp_stack_top
 
         lla t0, __bss_start
         lla t1, __bss_end

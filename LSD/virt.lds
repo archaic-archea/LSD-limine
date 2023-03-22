@@ -4,7 +4,8 @@ ENTRY(_boot);
 
 
 SECTIONS {
-    . = 0x80200000;
+    . = 0xffffffff80000000;
+
     .text : {
         PROVIDE(__text_start = .);
         PROVIDE(KERNEL_START = .);
@@ -30,7 +31,7 @@ SECTIONS {
     . = ALIGN(8);
 
     .sdata : {
-        PROVIDE(__global_pointer$ = .);
+        PROVIDE(__global_pointer = .);
         *(.sdata .sdata.*)       
         . = ALIGN(4K);
         PROVIDE(__data_end = .); 
@@ -51,7 +52,7 @@ SECTIONS {
         . = ALIGN(4K);
         PROVIDE(__tdata_start = .);
         
-        *(.tdata .tdata.*)
+        *(.tdata .tdata.* .tbss .tbss.*);
 
         . = ALIGN(4K);
         PROVIDE(__tdata_end = .);
