@@ -1,37 +1,70 @@
+// SPDX-FileCopyrightText: © 2023 Archaic Archea <archaic.archea@gmail.com>
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public License,
+// v. 2.0. If a copy of the MPL was not distributed with this file, You can
+// obtain one at https://mozilla.org/MPL/2.0/.
+
 #![no_std]
+#![feature(
+    pointer_byte_offsets,
+    sync_unsafe_cell,
+    const_mut_refs,
+    extend_one
+)]
 
-pub static mut WRITER: Writer = Writer;
+extern crate alloc;
 
-pub struct Writer;
+pub mod memory;
+pub mod uart;
+pub mod libs;
+pub mod utils;
 
-use core::fmt;
+pub use libs::*;
 
-impl fmt::Write for Writer {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for character in s.chars() {
-            let uart_ptr = 0x1000_0000 as *mut u8;
-            unsafe {
-                uart_ptr.write_volatile(character as u8)
-            }
-        }
+pub static MEM_MAP: limine::LimineMemmapRequest = limine::LimineMemmapRequest::new(0);
+pub static HHDM: limine::LimineHhdmRequest = limine::LimineHhdmRequest::new(0);
 
-        Ok(())
+pub fn init() {
+    let hhdm = HHDM.get_response().get().unwrap().offset;
+    memory::HHDM_OFFSET.store(hhdm as usize, Ordering::Relaxed);
+
+    unsafe {
+        memory::ALLOCATOR.lock().init(memory::HEAP.get() as usize, 16384);
+    }
+
+    memory::pmm::init();
+    memory::vmm::init();
+}
+
+pub struct IOPtr<T>(*mut T)
+    where T: Sized ;
+
+unsafe impl<T> Send for IOPtr<T> {}
+unsafe impl<T> Sync for IOPtr<T> {}
+
+impl<T> IOPtr<T> {
+    pub const fn new(ptr: *mut T) -> Self {
+        Self(ptr)
     }
 }
 
-#[macro_export]
-macro_rules! println {
-    () => ($crate::print!("\n"));
-    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+use core::{ops, sync::atomic::Ordering};
+
+impl<T> ops::Deref for IOPtr<T> {
+    type Target = T;
+    
+    fn deref(&self) -> &T {
+        unsafe {
+            &*self.0
+        }
+    }
 }
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => ($crate::_print(format_args!($($arg)*)));
-}
-#[doc(hidden)]
-pub fn _print(args: fmt::Arguments) {
-    use core::fmt::Write;
-    unsafe {
-        WRITER.write_fmt(args).unwrap();
+
+impl<T> ops::DerefMut for IOPtr<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe {
+            &mut *self.0
+        }
     }
 }

@@ -4,7 +4,7 @@ ENTRY(_boot);
 
 
 SECTIONS {
-    . = 0xffffffff80000000;
+    . = 0xfffffffa80000000;
 
     .text : {
         PROVIDE(__text_start = .);
@@ -16,25 +16,23 @@ SECTIONS {
         PROVIDE(__text_end = .);
     }
 
-    .data : {
-        PROVIDE(__data_start = .);
-        *(.data .data.* .rodata .rodata.*)
-        . = ALIGN(8);
-        PROVIDE(__tmp_stack_bottom = .);
-        . += 1024 * 1024 * 4;
-        PROVIDE(__tmp_stack_top = .);
-        . += 4096;
-        PROVIDE(__scratch_stack = .);
-        . = ALIGN(8);
-    }
-
-    . = ALIGN(8);
-
     .sdata : {
         PROVIDE(__global_pointer = .);
         *(.sdata .sdata.*)       
         . = ALIGN(4K);
         PROVIDE(__data_end = .); 
+    }
+
+    .data : {
+        PROVIDE(__data_start = .);
+        *(.data .data.*)
+        . = ALIGN(4K);
+    }
+
+    .rodata : {
+        PROVIDE(__rodata_start = .);
+        *(.rodata .rodata.*)
+        . = ALIGN(4k);
     }
 
     PROVIDE(__bss_start = .);

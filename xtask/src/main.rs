@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
                     -machine virt
                     -cpu rv64
                     -smp 1
-                    -m 128M
+                    -m 512M
                     -bios opensbi-riscv64-generic-fw_jump.bin
                     -kernel config/spark-riscv-sbi-release.bin
                     -device nvme,serial=deadbeff,drive=disk1
