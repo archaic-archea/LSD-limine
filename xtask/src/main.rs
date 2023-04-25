@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
             build_kernel()?;
 
             let debug_log: &[&str] = match debug {
-                true => &["-D", "debug.log"],
+                true => &["-d", "int", "-D", "debug.log"],
                 false => &[],
             };
 
@@ -41,8 +41,8 @@ fn main() -> anyhow::Result<()> {
                 qemu-system-riscv64
                     -machine virt
                     -cpu rv64
-                    -smp 1
-                    -m 512M
+                    -smp 2
+                    -m 4G
                     -bios opensbi-riscv64-generic-fw_jump.bin
                     -kernel config/spark-riscv-sbi-release.bin
                     -device nvme,serial=deadbeff,drive=disk1

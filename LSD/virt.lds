@@ -5,10 +5,11 @@ ENTRY(_boot);
 
 SECTIONS {
     . = 0xfffffffa80000000;
+    
+    PROVIDE(__image_base = .);
 
     .text : {
         PROVIDE(__text_start = .);
-        PROVIDE(KERNEL_START = .);
         *(.init.boot)
         *(.init.rust)
         *(.text .text.*)
@@ -16,48 +17,31 @@ SECTIONS {
         PROVIDE(__text_end = .);
     }
 
-    .sdata : {
-        PROVIDE(__global_pointer = .);
-        *(.sdata .sdata.*)       
-        . = ALIGN(4K);
-        PROVIDE(__data_end = .); 
-    }
-
-    .data : {
-        PROVIDE(__data_start = .);
-        *(.data .data.*)
-        . = ALIGN(4K);
-    }
-
-    .rodata : {
-        PROVIDE(__rodata_start = .);
-        *(.rodata .rodata.*)
-        . = ALIGN(4k);
-    }
-
-    PROVIDE(__bss_start = .);
-    .sbss : {
-        *(.sbss .sbss.*);
-    }
-
-    .bss : {
+    .rodata                 : { *(.rodata .rodata.*) }
+    .eh_frame_hdr           : { KEEP(*(.eh_frame_hdr)) }
+    PROVIDE(__eh_frame = .);
+    .eh_frame               : { KEEP(*(.eh_frame)) }
+    .dynsym                 : { *(.dynsym) }
+    .dynstr                 : { *(.dynstr) }
+    .rela                   : { *(.rela*) }
+    .dynamic                : { *(.dynamic) }
+    .got                    : { *(.got) }
+    .data.rel.ro            : { *(.data.rel.ro*) }
+    .data                   : ALIGN(4K) { *(.data .data.*) }
+    PROVIDE(__global_pointer = .);
+    .bss                    : ALIGN(4K) {
+        *(.dynbss)
         *(.bss .bss.*)
-    }
-    . = ALIGN(4K);
-    PROVIDE(__bss_end = .);
-
-    .tdata : {
-        . = ALIGN(4K);
-        PROVIDE(__tdata_start = .);
-        
-        *(.tdata .tdata.* .tbss .tbss.*);
-
-        . = ALIGN(4K);
-        PROVIDE(__tdata_end = .);
+        *(COMMON)
+        . += 0x100000;
+        . = ALIGN(128);
+        PROVIDE(__stack_top = .);
     }
 
-    . = ALIGN(2M);
-    PROVIDE(KERNEL_END = .);
+    PROVIDE(__tdata_start = .);
+    .tdata                   : ALIGN(4K) { *(.tdata .tdata.*) }
+    .tbss                    : ALIGN(4K) { *(.tbss .tbss.*) }
+    PROVIDE(__tdata_end = .);
 
-    /DISCARD/ : { *(.eh_frame_hdr .eh_frame) }
+    PROVIDE(__image_end = .);
 }

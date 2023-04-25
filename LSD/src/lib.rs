@@ -10,7 +10,9 @@
     pointer_byte_offsets,
     sync_unsafe_cell,
     const_mut_refs,
-    extend_one
+    extend_one,
+    thread_local,
+    naked_functions
 )]
 
 extern crate alloc;
@@ -21,20 +23,48 @@ pub mod libs;
 pub mod utils;
 
 pub use libs::*;
+use spin::Mutex;
+use core::sync::atomic;
 
-pub static MEM_MAP: limine::LimineMemmapRequest = limine::LimineMemmapRequest::new(0);
-pub static HHDM: limine::LimineHhdmRequest = limine::LimineHhdmRequest::new(0);
+static LOWER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("lower_half");
 
-pub fn init() {
-    let hhdm = HHDM.get_response().get().unwrap().offset;
-    memory::HHDM_OFFSET.store(hhdm as usize, Ordering::Relaxed);
+pub static FDT_PTR: Mutex<usize> = Mutex::new(0);
+pub static KERN_PHYS: Mutex<usize> = Mutex::new(0);
+
+#[thread_local]
+pub static HART_ID: atomic::AtomicUsize = atomic::AtomicUsize::new(1);
+
+pub fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize) {
+    memory::HHDM_OFFSET.store(hhdm_start, Ordering::Relaxed);
 
     unsafe {
         memory::ALLOCATOR.lock().init(memory::HEAP.get() as usize, 16384);
     }
-
-    memory::pmm::init();
+    memory::pmm::init(map);
+    memory::init_tls();
+    HART_ID.store(hart_id, core::sync::atomic::Ordering::Relaxed);
+    println!("Hart ID: {hart_id}");
     memory::vmm::init();
+
+    unsafe {
+        vmem::bootstrap()
+    }
+
+    LOWER_HALF.add(0x1000, (hhdm_start - 0x1001) as usize).unwrap();
+    println!("Vmem initialized");
+
+    let addr = LOWER_HALF.alloc(0x8000, vmem::AllocStrategy::BestFit).unwrap();
+    println!("Address claimed 0x{:x}", addr);
+    
+    unsafe {
+        LOWER_HALF.free(addr, 0x8000);
+    }
+    let addr = LOWER_HALF.alloc(0x8000, vmem::AllocStrategy::BestFit).unwrap();
+    println!("Address claimed 0x{:x}", addr);
+    
+    unsafe {
+        LOWER_HALF.free(addr, 0x8000);
+    }
 }
 
 pub struct IOPtr<T>(*mut T)

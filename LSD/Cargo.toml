@@ -8,7 +8,12 @@ license = "MPL-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-limine = "0.1.10"
 log = "0.4.17"
 spin = "0.9"
 fdt = "0.1.5"
+bitfield = "0.14.0"
+vmem = { git = "https://github.com/xvanc/vmem.git" }
+
+[dependencies.limine]
+git = "https://github.com/bolt-os/limine-rs"
+rev = "658a9d9"

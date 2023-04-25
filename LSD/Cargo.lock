@@ -9,6 +9,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
+name = "bitfield"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d7e60934ceec538daadb9d8432424ed043a904d8e0243f3c6446bce549a46ac"
+
+[[package]]
+name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bitflags"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24a6904aef64d73cf10ab17ebace7befb918b82164785cb89907993be7f83813"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22,9 +40,11 @@ checksum = "784a4df722dc6267a04af36895398f59d21d07dce47232adf31ec0ff2fa45e67"
 
 [[package]]
 name = "limine"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e9d0c951056ac044f0e6b09448b9d702f8fb1001db89cffd2bc467bd1c25307"
+version = "0.1.0"
+source = "git+https://github.com/bolt-os/limine-rs?rev=658a9d9#658a9d9eb94ad00485e27760f55cbc8355372169"
+dependencies = [
+ "bitflags 1.3.2",
+]
 
 [[package]]
 name = "lock_api"
@@ -49,10 +69,12 @@ dependencies = [
 name = "lsd"
 version = "0.1.0"
 dependencies = [
+ "bitfield",
  "fdt",
  "limine",
  "log",
  "spin",
+ "vmem",
 ]
 
 [[package]]
@@ -68,4 +90,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5d6e0250b93c8427a177b849d144a96d5acc57006149479403d7861ab721e34"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "vmem"
+version = "0.1.0"
+source = "git+https://github.com/xvanc/vmem.git#eae7f182bed35908b8f0e582bad6ba50b40121ae"
+dependencies = [
+ "bitflags 2.2.1",
+ "log",
+ "spin",
 ]

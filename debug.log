@@ -1,0 +1,2 @@
+riscv_cpu_do_interrupt: hart:0, async:0, cause:0000000000000002, epc:0x0000000080005f52, tval:0x000000003c002573, desc=illegal_instruction
+riscv_cpu_do_interrupt: hart:0, async:0, cause:0000000000000007, epc:0x00000000802030ba, tval:0xffffffffffffffe1, desc=fault_store
