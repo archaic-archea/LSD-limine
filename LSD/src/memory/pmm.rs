@@ -81,14 +81,23 @@ impl FreeList {
     }
 
     pub fn shove(&mut self, new: *mut u8) {
+        if (new as usize) < 0x1000 {
+            panic!("Attempt attempt to push entry in page 0");
+        }
+        if ((new as usize) & 0xfff) != 0 {
+            panic!("Bad alignment for entry");
+        }
+
         unsafe {
-            let head: &mut FreeListEntry = &mut *self.head.read();
+            let head = &mut *self.head.read();
+            let new = &mut *(new as *mut FreeListEntry);
+            new.next.write(core::ptr::null_mut());
+            new.prev.write(core::ptr::null_mut());
 
             head.prev.write(new as *mut FreeListEntry);
-            (*head.prev.read()).next.write(self.head.read());
+            new.next.write(self.head.read());
             
-            self.head.write(head.prev.read());
-            (*self.head.read()).prev.write(core::ptr::null_mut());
+            self.head.write(new as *mut FreeListEntry);
 
             self.len.write(self.len.read() + 1);
         }

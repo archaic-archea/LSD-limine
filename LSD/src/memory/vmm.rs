@@ -78,10 +78,10 @@ impl<'a, 'b> Vmm <'a, 'b> {
                 LEVELS.load(Ordering::Relaxed)as usize
             );
 
-            let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
+            let _phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
             // FIXME: Causes error with the page tables :uhhh:
-            super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
+            //super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
         }
