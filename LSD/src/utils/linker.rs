@@ -10,10 +10,10 @@ pub struct LinkerSymbol(u8);
 
 impl LinkerSymbol {
     pub fn as_ptr(&self) -> *const u8 {
-        return self as *const Self as *const u8;
+        self as *const Self as *const u8
     }
 
     pub fn as_usize(&self) -> usize {
-        return self.as_ptr() as usize;
+        self.as_ptr() as usize
     }
 }

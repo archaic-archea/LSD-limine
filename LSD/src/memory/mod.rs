@@ -34,7 +34,7 @@ pub fn init_tls() {
             frames += 1;
         }
 
-        let tls_base = pmm::REGION_LIST.lock().claim_frames(frames).unwrap();
+        let tls_base = pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
 
         for offset in 0..tdata_size {
             let read_addr = linker::__tdata_start.as_ptr().byte_add(offset);
@@ -187,28 +187,4 @@ impl<A> Locked<A> {
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
-}
-
-/// All reads/writes are volatile
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub struct VolatileCell<T>(T);
-
-impl<T> VolatileCell<T> {
-    pub fn write(&mut self, val: T) {
-        let ptr = core::ptr::addr_of_mut!(self.0);
-        unsafe {
-            ptr.write_volatile(val);
-        }
-    }
-
-    pub fn read(&self) -> T {
-        let ptr = core::ptr::addr_of!(self.0);
-        unsafe {
-            ptr.read_volatile()
-        }
-    }
-
-    pub const fn new(val: T) -> Self {
-        Self(val)
-    }
 }

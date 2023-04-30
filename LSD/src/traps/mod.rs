@@ -16,7 +16,7 @@ pub fn init() {
     unsafe {
         let new_sscratch = alloc::alloc::alloc(alloc::alloc::Layout::new::<Sscratch>()) as *mut Sscratch;
 
-        (*new_sscratch).int_stack_top = super::memory::pmm::REGION_LIST.lock().claim_frames(0x20).unwrap().byte_add(0x20 * 0x1000);
+        (*new_sscratch).int_stack_top = super::memory::pmm::REGION_LIST.lock().claim_continuous(0x20).unwrap().byte_add(0x20 * 0x1000);
         core::arch::asm!(
             "
                 mv {stp}, tp

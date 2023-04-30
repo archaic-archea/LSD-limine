@@ -49,12 +49,20 @@ impl Sstatus {
 
             core::arch::asm!("csrr {sval}, sstatus", sval = out(reg) sstatus_val);
 
-            return core::mem::transmute(sstatus_val);
+            core::mem::transmute(sstatus_val)
         }
     }
 
+    /// # Safety
+    /// Only safe if reserved bits arent set
     pub unsafe fn set(&self) {
         core::arch::asm!("csrw sstatus, {sval}", sval = in(reg) self.0);
+    }
+}
+
+impl Default for Sstatus {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -83,12 +91,20 @@ impl Sie {
 
             core::arch::asm!("csrr {sval}, sie", sval = out(reg) sie_val);
 
-            return core::mem::transmute(sie_val);
+            core::mem::transmute(sie_val)
         }
     }
 
+    /// # Safety
+    /// Only safe if `zero` bits are zeroed
     pub unsafe fn set(&self) {
         core::arch::asm!("csrw sie, {sval}", sval = in(reg) self.0);
+    }
+}
+
+impl Default for Sie {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -101,7 +117,7 @@ impl Time {
 
             core::arch::asm!("csrr {ret}, time", ret = out(reg) ret);
 
-            return ret;
+            ret
         }
     }
 }

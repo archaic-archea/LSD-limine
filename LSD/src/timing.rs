@@ -12,7 +12,7 @@ impl Unit {
 
         match self {
             Unit::Seconds(secs) => {
-                return timer_speed * secs;
+                timer_speed * secs
             }
         }
     }

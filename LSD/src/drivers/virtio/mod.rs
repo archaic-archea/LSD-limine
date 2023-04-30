@@ -66,7 +66,7 @@ pub struct VirtIOHeader {
 
 impl VirtIOHeader {
     pub fn is_valid(&self) -> bool {
-        return self.magic.read() == 0x74726976;
+        self.magic.read() == 0x74726976
     }
 }
 

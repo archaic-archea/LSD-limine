@@ -16,7 +16,8 @@
     asm_const,
     fn_align,
     stdsimd,
-    core_intrinsics
+    core_intrinsics,
+    pointer_is_aligned
 )]
 
 extern crate alloc;
@@ -45,7 +46,9 @@ pub static HART_ID: atomic::AtomicUsize = atomic::AtomicUsize::new(1);
 
 pub const IO_OFFSET: u64 = 0xffffffff80000000;
 
-pub fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb: *const u8) {
+/// # Safety
+/// Should only be called once by the boot strap processor
+pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb: *const u8) {
     memory::HHDM_OFFSET.store(hhdm_start, Ordering::Relaxed);
     *FDT_PTR.lock() = dtb as usize;
 

@@ -34,7 +34,14 @@ extern "C" fn kmain() -> ! {
 
     assert!(PAGING.has_response(), "Paging request failed");
 
-    lsd::init(MAP.response().unwrap(), HHDM.response().unwrap().base as u64, SMP.response().unwrap().bsp_hartid, FDT.response().unwrap().dtb_ptr);
+    unsafe {
+        lsd::init(
+            MAP.response().unwrap(), 
+            HHDM.response().unwrap().base as u64, 
+            SMP.response().unwrap().bsp_hartid, 
+            FDT.response().unwrap().dtb_ptr
+        );
+    }
 
     smp_init();
 
@@ -92,7 +99,7 @@ fn smp_init() {
 
             unsafe {
                 CORE_INIT.satp = core::mem::transmute(satp);
-                CORE_INIT.sp = lsd::memory::pmm::REGION_LIST.lock().claim_frames(0x80).unwrap() as usize;
+                CORE_INIT.sp = lsd::memory::pmm::REGION_LIST.lock().claim_continuous(0x80).unwrap() as usize;
 
                 println!("Core 0x{:x} starting", hart_id);
                 core.start(core_main, core::ptr::addr_of!(CORE_INIT) as usize);
@@ -107,6 +114,8 @@ fn smp_init() {
     }
 }
 
+/// # Safety
+/// Should only be called once per core
 #[no_mangle]
 pub unsafe extern "C" fn core_main(smpinfo: &limine::SmpInfo) -> ! {
     core::arch::asm!("

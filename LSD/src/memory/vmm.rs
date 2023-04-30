@@ -38,7 +38,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
             let mut claim_phys = PhysicalAddress(0);
 
             if contiguous {
-                claim = pmm::REGION_LIST.lock().claim_frames(frames);
+                claim = pmm::REGION_LIST.lock().claim_continuous(frames);
                 claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
             }
 
@@ -83,7 +83,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
             let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
             // FIXME: Causes error with the page tables :uhhh:
-            super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
+            super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
         }
