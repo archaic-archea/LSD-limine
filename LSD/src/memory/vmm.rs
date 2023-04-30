@@ -252,7 +252,7 @@ pub unsafe fn unmap(
             
             println!("Leaf at index {} of table {:?}", table_index, table);
             let return_addr = entry.get_ppn() << 12;
-            entry.set_valid(false);
+            entry.0 = 0;
 
             table.write_volatile(table_copy);
 
