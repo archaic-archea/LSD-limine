@@ -255,7 +255,7 @@ pub unsafe fn unmap(
 
             return PhysicalAddress(return_addr);
         } else {
-            let entry = &(*table).0[table_index as usize];
+            let entry = (*table).0[table_index as usize].clone();
 
             if entry.is_leaf() {
                 panic!("Unexpected entry");
@@ -264,9 +264,12 @@ pub unsafe fn unmap(
                 let next_table_phys = entry.get_ppn() << 12;
                 let next_table = next_table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
+                let tmp = table.clone();
                 table = next_table as *mut PageTable;
+
+                println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
             } else {
-                panic!("No entry found for virt 0x{:x} table dump: {:#?}", virt.0, *table);
+                panic!("No entry found for virt 0x{:x}\ntable {:?}\ndump: {:#?}\nentry 0x{:x}", virt.0, table, *table, (*table).0[table_index as usize].0);
             }
 
             level = PageLevel::from_usize(level.as_usize() - 1);
