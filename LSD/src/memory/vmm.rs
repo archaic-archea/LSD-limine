@@ -80,6 +80,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
+            // Causes error with the page tables :uhhh:
             super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
@@ -254,8 +255,8 @@ pub unsafe fn unmap(
             let return_addr = entry.get_ppn() << 12;
             entry.0 = 0;
 
-            println!("Old table dump: \n{:?}", table.read_volatile());
-            println!("New table dump: \n{:?}", table_copy);
+            //println!("Old table dump: \n{:?}", table.read_volatile());
+            //println!("New table dump: \n{:?}", table_copy);
             table.write_volatile(table_copy);
 
             return PhysicalAddress(return_addr);
