@@ -82,7 +82,6 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-            // FIXME: Causes error with the page tables :uhhh:
             super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
@@ -201,6 +200,7 @@ pub unsafe fn init() {
     println!("Virtual memory initialized");
 }
 
+/// FIXME: Somehow mutates source table
 /// # Safety
 /// Only run on an unloaded table
 pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
