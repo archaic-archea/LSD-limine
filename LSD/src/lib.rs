@@ -105,7 +105,7 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
     println!("Claim 0x{:x}", claim);
 
     unsafe {
-        LOWER_HALF.free(claim, 0x8000);
+        //LOWER_HALF.free(claim, 0x8000);
     }
 }
 

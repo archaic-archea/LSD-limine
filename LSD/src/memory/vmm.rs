@@ -49,6 +49,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
                 } else {
                     claim_phys.0 += 4096;
                 }
+                println!("Mapping 0x{:x}", claim_phys.0);
 
                 let level = PageLevel::from_usize(
                     LEVELS.load(Ordering::Relaxed)as usize
@@ -305,6 +306,8 @@ pub unsafe fn map(
             let entry = &mut table_copy.0[table_index as usize];
 
             //println!("Made leaf at index {} of table {:?}", table_index, table);
+            entry.0 = 0;
+
             entry.set_ppn(phys.get_ppn());
             entry.set_valid(true);
             entry.set_read(true);
