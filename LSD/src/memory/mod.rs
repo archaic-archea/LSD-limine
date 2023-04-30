@@ -19,36 +19,36 @@ pub static ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAlloca
 
 pub static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
 
-pub fn init_tls() {
+/// # Safety
+/// Can only be called once per core
+pub unsafe fn init_tls() {
     use super::utils::linker;
 
-    unsafe {
-        let tdata_start = linker::__tdata_start.as_usize();
-        let tdata_end = linker::__tdata_end.as_usize();
+    let tdata_start = linker::__tdata_start.as_usize();
+    let tdata_end = linker::__tdata_end.as_usize();
 
-        let tdata_size = tdata_end - tdata_start;
+    let tdata_size = tdata_end - tdata_start;
 
-        let mut frames = tdata_size / 4096;
-        
-        if (tdata_size & 0xfff) != 0 {
-            frames += 1;
-        }
-
-        let tls_base = pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
-
-        for offset in 0..tdata_size {
-            let read_addr = linker::__tdata_start.as_ptr().byte_add(offset);
-            let write_addr = tls_base.byte_add(offset);
-
-            let read = *read_addr;
-            write_addr.write(read);
-        }
-
-        core::arch::asm!(
-            "mv tp, {tls}",
-            tls = in(reg) tls_base
-        );
+    let mut frames = tdata_size / 4096;
+    
+    if (tdata_size & 0xfff) != 0 {
+        frames += 1;
     }
+
+    let tls_base = pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+
+    for offset in 0..tdata_size {
+        let read_addr = linker::__tdata_start.as_ptr().byte_add(offset);
+        let write_addr = tls_base.byte_add(offset);
+
+        let read = *read_addr;
+        write_addr.write(read);
+    }
+
+    core::arch::asm!(
+        "mv tp, {tls}",
+        tls = in(reg) tls_base
+    );
 }
 
 bitfield::bitfield! {

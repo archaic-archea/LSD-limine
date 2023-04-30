@@ -56,7 +56,6 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
                 let virt = VirtualAddress((*section_data + offset) as u64);
 
-                println!("Mapping");
                 unsafe {
                     map(current_table().cast_mut(), virt, claim_phys, level, PageLevel::Level1, &mut pmm::REGION_LIST.lock());
                 }
@@ -242,8 +241,6 @@ pub unsafe fn unmap(
     let mut table = table;
     let mut level = level;
 
-    println!("Unmapping 0x{:x}", virt.0);
-
     loop {
         let table_index = virt.index(level);
 
@@ -255,7 +252,7 @@ pub unsafe fn unmap(
                 panic!("No leaf found while unmapping");
             }
             
-            println!("Leaf at index {} of table {:?}", table_index, table);
+            //println!("Leaf at index {} of table {:?}", table_index, table);
             let return_addr = entry.get_ppn() << 12;
             entry.0 = 0;
 
@@ -270,14 +267,14 @@ pub unsafe fn unmap(
             if entry.is_leaf() {
                 panic!("Unexpected entry");
             } else if entry.is_branch() {
-                println!("Table at index {} of table {:?}", table_index, table);
+                //println!("Table at index {} of table {:?}", table_index, table);
                 let next_table_phys = entry.get_ppn() << 12;
                 let next_table = next_table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-                let tmp = table;
+                //let tmp = table;
                 table = next_table as *mut PageTable;
 
-                println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
+                //println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
             } else {
                 panic!("No entry found for virt 0x{:x}\ntable {:?}\ndump: {:#?}\nentry 0x{:x}", virt.0, table, *table, (*table).0[table_index as usize].0);
             }
@@ -307,7 +304,7 @@ pub unsafe fn map(
             let mut table_copy = table.read_volatile();
             let entry = &mut table_copy.0[table_index as usize];
 
-            println!("Made leaf at index {} of table {:?}", table_index, table);
+            //println!("Made leaf at index {} of table {:?}", table_index, table);
             entry.set_ppn(phys.get_ppn());
             entry.set_valid(true);
             entry.set_read(true);
@@ -321,14 +318,14 @@ pub unsafe fn map(
             let entry = table_copy.0[table_index as usize];
 
             if entry.is_branch() {
-                println!("Found table at index {} of table {:?}", table_index, table);
+                //println!("Found table at index {} of table {:?}", table_index, table);
                 table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
             } else if entry.is_leaf() {
                 panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
             } else if !entry.get_valid() {
                 let entry = &mut table_copy.0[table_index as usize];
 
-                println!("Made table at index {} of table {:?}", table_index, table);
+                //println!("Made table at index {} of table {:?}", table_index, table);
                 let new_table = pmm_lock.claim() as *mut PageTable;
                 let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
 

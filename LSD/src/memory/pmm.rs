@@ -79,7 +79,8 @@ impl FreeList {
         (*new).next = core::ptr::null_mut();
         (*new).prev = self.tail;
 
-        // Set new tail
+        // Link the new entry and set new tail
+        (*self.tail).next = new;
         self.tail = new;
 
         // Increment length
@@ -103,7 +104,8 @@ impl FreeList {
         (*new).prev = core::ptr::null_mut();
         (*new).next = self.head;
 
-        // Set new head
+        // Link the new entry and set new head
+        (*self.head).prev = new;
         self.head = new;
 
         // Increment length
@@ -125,6 +127,10 @@ impl FreeList {
     }
 
     pub fn claim_continuous(&mut self, frames: usize) -> Option<*mut u8> {
+        if frames == 1 {
+            return Some(self.claim());
+        }
+
         // Store the head as a current entry, as well as the base entry of this contigous section
         let mut base_entry = self.head;
         let mut current_entry = self.head;
