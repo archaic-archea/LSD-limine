@@ -22,7 +22,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
         Self(vmem::Vmem::new(alloc::borrow::Cow::Borrowed(name), 1, None))
     }
 
-    pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy) -> Result<usize, vmem::Error> {
+    pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, contiguous: bool) -> Result<usize, vmem::Error> {
         let section = self.0.alloc(size, strategy);
 
         if !section.is_err() {
@@ -34,9 +34,21 @@ impl<'a, 'b> Vmm <'a, 'b> {
                 frames += 1;
             }
 
+            let mut claim: Option<*mut u8>;
+            let mut claim_phys = PhysicalAddress(0);
+
+            if contiguous {
+                claim = pmm::REGION_LIST.lock().claim_frames(frames);
+                claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+            }
+
             for offset in (0..size).step_by(4096) {
-                let claim = pmm::REGION_LIST.lock().claim_frames(frames).unwrap();
-                let claim_phys = PhysicalAddress((claim as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+                if !contiguous {
+                    claim = Some(pmm::REGION_LIST.lock().claim());
+                    claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+                } else {
+                    claim_phys.0 += 4096;
+                }
 
                 let level = PageLevel::from_usize(
                     LEVELS.load(Ordering::Relaxed)as usize
@@ -44,9 +56,12 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
                 let virt = VirtualAddress((*section_data + offset) as u64);
 
-                map(current_table(), virt, claim_phys, level, PageLevel::Level1, &mut pmm::REGION_LIST.lock());
+                println!("Mapping");
+                unsafe {
+                    map(current_table().cast_mut(), virt, claim_phys, level, PageLevel::Level1, &mut pmm::REGION_LIST.lock());
+                }
 
-                flush_tlb(Some(virt), None);
+                flush_tlb(None, None);
             }
         }
 
@@ -63,18 +78,27 @@ impl<'a, 'b> Vmm <'a, 'b> {
                 LEVELS.load(Ordering::Relaxed)as usize
             );
 
-            let phys = unmap(current_table(), virt, level).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
+            let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
             super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
 
-            flush_tlb(Some(virt), None);
-            return;
+            flush_tlb(None, None);
         }
     }
 
     pub fn add(&self, base: usize, size: usize) -> Result<(), vmem::Error> {
         self.0.add(base, size)
     }
+}
+
+pub fn new_with_upperhalf() -> *mut PageTable {
+    let new_table = pmm::REGION_LIST.lock().claim() as *mut PageTable;
+
+    unsafe {
+        clone_table_range(&*current_table(), &mut *new_table, 256..512);
+    }
+
+    return new_table;
 }
 
 pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
@@ -95,7 +119,7 @@ pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
 }
 
 pub fn init() {
-    let fdt_ptr = super::super::FDT_PTR.lock().clone() as *const u8;
+    let fdt_ptr = crate::FDT_PTR.lock().clone() as *const u8;
     let fdt = unsafe {fdt::Fdt::from_ptr(fdt_ptr).expect("Invalid FDT ptr")};
     let node = fdt.find_node("/cpus/cpu@0").unwrap();
     let mmu_type = node.property("mmu-type").unwrap().as_str().unwrap();
@@ -126,14 +150,15 @@ pub fn init() {
 
     let root_table_claim = pmm::REGION_LIST.lock().claim() as *mut PageTable;
 
-    clone_table_range(current_table(), root_table_claim, 256..512);
+    unsafe {
+        clone_table_range(&*current_table(), &mut *root_table_claim, 256..512);
+    }
 
     let mut reg_list_lock = super::pmm::REGION_LIST.lock();
 
     println!("Mapping IO");
     for i in (0..0x8000_0000_u64).step_by(PageSize::Large as usize) {
         let virt = VirtualAddress::new(0xffffffff80000000).add(i as u64);
-        //let virt = VirtualAddress::new(0x00).add(i as u64);
         let phys = PhysicalAddress::new(0x00).add(i as u64);
 
         let level = PageLevel::from_usize(
@@ -142,7 +167,9 @@ pub fn init() {
         
         println!("{:?} 0x{:x} -> 0x{:x}", level, virt.0, phys.0);
 
-        map(root_table_claim, virt, phys, level, PageLevel::Level3, &mut reg_list_lock);
+        unsafe {
+            map(root_table_claim, virt, phys, level, PageLevel::Level3, &mut reg_list_lock);
+        }
     }
     println!("Mapped IO");
 
@@ -162,33 +189,35 @@ pub fn init() {
         new_satp.set();
     }
     crate::uart::UART.lock().0 = 0xffffffff90000000 as *mut crate::uart::Uart16550;
+
+    println!("Virtual memory initialized");
 }
 
-pub fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
-    unsafe {
-        for index in range {
-            let entry = &(*src).0[index];
-            let new_entry = &mut (*dest).0[index];
+pub fn clone_table_range(src: &PageTable, dest: &mut PageTable, range: core::ops::Range<usize>) {
+    for index in range {
+        let src_entry = &(*src).0[index];
+        let dest_entry = &mut (*dest).0[index];
 
-            if entry.is_branch() {
-                *new_entry = *entry;
+        if src_entry.is_branch() {
+            *dest_entry = src_entry.clone();
 
-                let new_claim = pmm::REGION_LIST.lock().claim() as u64;
-                let phys_new_claim = new_claim - super::HHDM_OFFSET.load(Ordering::Relaxed);
+            let new_claim = pmm::REGION_LIST.lock().claim() as u64;
+            let phys_new_claim = new_claim - super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-                new_entry.set_ppn(phys_new_claim >> 12);
+            dest_entry.set_ppn(phys_new_claim >> 12);
 
-                clone_table_range(entry.table(), new_entry.table(), 0..512);
-            } else if entry.is_leaf() {
-                *new_entry = *entry;
-            } else {
-                *new_entry = PageEntry(0);
+            unsafe {
+                clone_table_range(&*src_entry.table(), &mut *dest_entry.table().cast_mut(), 0..512);
             }
+        } else if src_entry.is_leaf() {
+            *dest_entry = src_entry.clone();
+        } else {
+            *dest_entry = PageEntry(0);
         }
     }
 }
 
-pub fn current_table() -> *mut PageTable {
+pub fn current_table() -> *const PageTable {
     let satp = Satp::new();
 
     let ppn = satp.get_ppn();
@@ -199,37 +228,45 @@ pub fn current_table() -> *mut PageTable {
     return virt as *mut PageTable;
 }
 
-pub fn unmap(
+pub unsafe fn unmap(
     table: *mut PageTable,
     virt: VirtualAddress,
-    level: PageLevel
+    level: PageLevel,
+    target_level: PageLevel,
 ) -> PhysicalAddress {
     let mut table = table;
     let mut level = level;
 
-    loop {
-        unsafe {
-            let table_index = virt.index(level.as_usize());
+    println!("Unmapping 0x{:x}", virt.0);
 
+    loop {
+        let table_index = virt.index(level);
+
+        if level == target_level {
             let entry = &mut (*table).0[table_index as usize];
 
-            if entry.is_leaf() {
-                println!("Found entry to unmap");
-                let return_addr = entry.get_ppn() << 12;
-                entry.0 = 0;
+            if !entry.is_leaf() {
+                panic!("No leaf found while unmapping");
+            }
+            
+            println!("Leaf at index {} of table {:?}", table_index, table);
+            let return_addr = entry.get_ppn() << 12;
+            entry.set_valid(false);
 
-                return PhysicalAddress(return_addr);
+            return PhysicalAddress(return_addr);
+        } else {
+            let entry = &(*table).0[table_index as usize];
+
+            if entry.is_leaf() {
+                panic!("Unexpected entry");
             } else if entry.is_branch() {
+                println!("Table at index {} of table {:?}", table_index, table);
                 let next_table_phys = entry.get_ppn() << 12;
                 let next_table = next_table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
                 table = next_table as *mut PageTable;
             } else {
-                panic!("No entry found for virt 0x{:x}", virt.0);
-            }
-
-            if level == PageLevel::Level1 {
-                panic!("Reached level 1");
+                panic!("No entry found for virt 0x{:x} table dump: {:#?}", virt.0, *table);
             }
 
             level = PageLevel::from_usize(level.as_usize() - 1);
@@ -237,8 +274,8 @@ pub fn unmap(
     }
 }
 
-pub fn map(
-    table: *mut PageTable,
+pub unsafe fn map(
+    table: *const PageTable,
     virt: VirtualAddress, 
     phys: PhysicalAddress, 
     level: PageLevel, 
@@ -249,38 +286,37 @@ pub fn map(
     let mut level = level;
 
     loop {
-        unsafe {
-            let table_index = virt.index(level.as_usize());
-            
-            let entry = &mut (*table).0[table_index as usize];
+        let table_index = virt.index(level);
+        
+        let entry = &(*table).0[table_index as usize];
+        let mut_entry = &mut (*table.cast_mut()).0[table_index as usize];
 
-            if level == target_level {
-                //println!("Making leaf at index {} of table {:?}", table_index, table);
-                entry.set_ppn(phys.get_ppn());
-                entry.set_valid(true);
-                entry.set_read(true);
-                entry.set_write(true);
-                entry.set_exec(true);
-                return;
-            }
-
-            if entry.is_branch() {
-                //println!("Found branch at index {} of table {:?}", table_index, table);
-                table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
-            } else if entry.is_leaf() {
-                panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
-            } else if !entry.get_valid() {
-                //println!("Making branch at index {} of table {:?}", table_index, table);
-                let new_table = pmm_lock.claim() as *mut PageTable;
-                let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-
-                entry.set_ppn(new_table_phys >> 12);
-                entry.set_valid(true);
-                table = new_table;
-            }
-
-            level = PageLevel::from_usize(level.as_usize() - 1);
+        if level == target_level {
+            println!("Made leaf at index {} of table {:?}", table_index, table);
+            mut_entry.set_ppn(phys.get_ppn());
+            mut_entry.set_valid(true);
+            mut_entry.set_read(true);
+            mut_entry.set_write(true);
+            mut_entry.set_exec(true);
+            return;
         }
+
+        if entry.is_branch() {
+            println!("Found table at index {} of table {:?}", table_index, table);
+            table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
+        } else if entry.is_leaf() {
+            panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
+        } else if !entry.get_valid() {
+            println!("Made table at index {} of table {:?}", table_index, table);
+            let new_table = pmm_lock.claim() as *mut PageTable;
+            let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+
+            mut_entry.set_ppn(new_table_phys >> 12);
+            mut_entry.set_valid(true);
+            table = new_table;
+        }
+
+        level = PageLevel::from_usize(level.as_usize() - 1);
     }
 }
 
@@ -372,11 +408,33 @@ impl ops::Add<usize> for PageLevel {
     }
 }
 
+#[repr(transparent)]
 pub struct PageTable([PageEntry; 512]);
+
+impl core::fmt::Debug for PageTable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut index = 0;
+
+        for entry in self.0.iter() {
+            if entry.get_valid() {
+                write!(f, "index {index}: 0x{:x}", entry.0)?;
+                if index < 511 {
+                    writeln!(f, ",")?;
+                }
+            }
+
+            index += 1;
+        }
+
+        Ok(())
+    }
+}
 
 bitfield::bitfield!{
     #[derive(Copy, Clone)]
+    #[repr(transparent)]
     struct PageEntry(u64);
+    impl Debug;
     u64;
     get_valid, set_valid: 0;
     get_read, set_read: 1;
@@ -395,32 +453,41 @@ bitfield::bitfield!{
 
 impl PageEntry {
     pub fn is_branch(&self) -> bool {
-        return self.get_valid() && !self.get_read() && !self.get_write() && !self.get_exec();
+        return self.get_valid() && (
+            (!self.get_read()) && 
+            (!self.get_write()) && 
+            (!self.get_exec()) &&
+            (!self.get_user()) &&
+            (!self.get_accessed()) &&
+            (!self.get_dirty())
+        );
     }
 
     pub fn is_leaf(&self) -> bool {
         return self.get_valid() && (self.get_read() || self.get_write() || self.get_exec());
     }
 
-    pub fn table(&self) -> *mut PageTable {
+    pub fn table(&self) -> *const PageTable {
         let table_phys = self.get_ppn() << 12;
         let table = table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-        return table as *mut PageTable;
+        return table as *const PageTable;
     }
 }
 
 bitfield::bitfield!{
-    struct Satp(u64);
-    u64;
-    get_ppn, set_ppn: 43, 0;
-    get_asid, set_asid: 59, 44;
-    get_mode, set_mode: 63, 60;
+    #[repr(transparent)]
+    pub struct Satp(u64);
+    
+    pub get_ppn, set_ppn: 43, 0;
+    pub get_asid, set_asid: 59, 44;
+    pub get_mode, set_mode: 63, 60;
 }
 
 impl Satp {
     pub unsafe fn set(&self) {
         core::arch::asm!("csrw satp, {new}", new = in(reg) self.0);
+        flush_tlb(None, None);
     }
 
     pub fn new() -> Self {
@@ -433,5 +500,46 @@ impl Satp {
         let new_satp = unsafe {core::mem::transmute(new_satp)};
 
         return new_satp;
+    }
+}
+
+pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static str> {
+    let mut table = current_table();
+
+    let mut levels = PageLevel::from_usize(LEVELS.load(Ordering::Relaxed) as usize);
+
+    unsafe {
+        loop {
+            let entry = &(*table).0[virt.index(levels) as usize];
+
+            if entry.is_leaf() {
+                let mut addr = PhysicalAddress(0);
+
+                let mask: u64 = match levels {
+                    PageLevel::Level1 => 0xfff,
+                    PageLevel::Level2 => 0x1f_ffff,
+                    PageLevel::Level3 => 0x3fff_ffff,
+                    PageLevel::Level4 => 0x7f_ffff_ffff,
+                    PageLevel::Level5 => 0xffff_ffff_ffff,
+                    _ => 0
+                };
+
+                let inv_mask = !mask;
+
+                addr.0 = addr.0 & inv_mask;
+                addr.0 |= virt.0 & mask;
+
+                println!("Mask level {levels:?}");
+                println!("mask: 0b{mask:064b}\nvirt: 0b{:064b}", virt.0);
+
+                return Ok(addr);
+            } else if entry.is_branch() {
+                table = entry.table();
+            } else {
+                return Err("Table not found");
+            }
+
+            levels = PageLevel::from_usize(levels.as_usize() - 1);
+        }
     }
 }

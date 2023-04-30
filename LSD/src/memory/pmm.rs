@@ -8,6 +8,7 @@
 use spin::Mutex;
 
 use crate::println;
+use super::VolatileCell;
 
 pub static REGION_LIST: Mutex<FreeList> = Mutex::new(FreeList::null());
 
@@ -30,62 +31,84 @@ pub fn init(map: &limine::MemoryMap) {
             }
         }
     }
+    println!("Initialized pmm");
 }
 
 pub struct FreeList {
-    head: *mut FreeListEntry,
-    tail: *mut FreeListEntry,
+    head: VolatileCell<*mut FreeListEntry>,
+    tail: VolatileCell<*mut FreeListEntry>,
+    len: VolatileCell<usize>,
 }
 
 impl FreeList {
     const fn null() -> Self {
-        FreeList { head: core::ptr::null_mut(), tail: core::ptr::null_mut() }
+        FreeList { head: VolatileCell::new(core::ptr::null_mut()), tail: VolatileCell::new(core::ptr::null_mut()), len: VolatileCell::new(0) }
     }
 
     pub fn init(&mut self, new: *mut u8) {
         unsafe {
-            self.head = new as *mut FreeListEntry;
-            (*self.head).next = core::ptr::null_mut();
-            (*self.head).prev = core::ptr::null_mut();
-            self.tail = new as *mut FreeListEntry;
+            let new = &mut *(new as *mut FreeListEntry);
+            new.next.write(core::ptr::null_mut());
+            new.prev.write(core::ptr::null_mut());
+
+            self.head.write(new as *mut FreeListEntry);
+            self.tail.write(new as *mut FreeListEntry);
+            self.len.write(1);
         }
     }
 
     pub fn push(&mut self, new: *mut u8) {
-        unsafe {
-            let tail = &mut *self.tail;
+        if (new as usize) < 0x1000 {
+            panic!("Attempt attempt to push entry in page 0");
+        }
+        if ((new as usize) & 0xfff) != 0 {
+            panic!("Bad alignment for entry");
+        }
 
-            tail.next = new as *mut FreeListEntry;
-            (*tail.next).prev = self.tail;
+        unsafe {
+            let tail = &mut *self.tail.read();
+            let new = &mut *(new as *mut FreeListEntry);
+            new.next.write(core::ptr::null_mut());
+            new.prev.write(core::ptr::null_mut());
+
+            tail.next.write(new as *mut FreeListEntry);
+            new.prev.write(self.tail.read());
             
-            self.tail = tail.next;
-            (*self.tail).next = core::ptr::null_mut();
+            self.tail.write(new as *mut FreeListEntry);
+
+            self.len.write(self.len.read() + 1);
         }
     }
 
     pub fn shove(&mut self, new: *mut u8) {
         unsafe {
-            let head: &mut FreeListEntry = &mut *self.head;
+            let head: &mut FreeListEntry = &mut *self.head.read();
 
-            head.prev = new as *mut FreeListEntry;
-            (*head.prev).next = self.head;
+            head.prev.write(new as *mut FreeListEntry);
+            (*head.prev.read()).next.write(self.head.read());
             
-            self.head = head.prev;
-            (*self.head).prev = core::ptr::null_mut();
+            self.head.write(head.prev.read());
+            (*self.head.read()).prev.write(core::ptr::null_mut());
+
+            self.len.write(self.len.read() + 1);
         }
     }
 
     pub fn claim(&mut self) -> *mut u8 {
-        let ret = self.head as *mut u8;
+        let ret = self.head.read() as *mut u8;
 
         unsafe {
-            (*(*self.head).next).prev = core::ptr::null_mut();
-            self.head = (*self.head).next;
+            let head = &mut *self.head.read();
+            let next = &mut *head.next.read();
+            next.prev.write(core::ptr::null_mut());
+            self.head.write((*self.head.read()).next.read());
 
             for i in 0..4096 {
-                *ret.add(i) = 0;
+                ret.add(i).write_volatile(0);
             }
         }
+
+        self.len.write(self.len.read() - 1);
 
         ret
     }
@@ -93,18 +116,51 @@ impl FreeList {
     pub fn claim_frames(&mut self, frames: usize) -> Option<*mut u8> {
         let mut cur_frames_found: usize = 1;
 
+        if frames == 1 {
+            return Some(self.claim());
+        }
+
         unsafe {
             let mut current_base = Some(self.head);
             let mut base = Some(self.head);
 
             while base != None {
-                let buffer = (*base.unwrap()).next();
+                if cur_frames_found == frames {
+                    let prev = (*current_base.unwrap().read()).prev.read();
+                    let next = (*base.unwrap().read()).next.read();
 
-                if buffer == None {
-                    return None;
+                    if prev.is_null() {
+                        if next.is_null() || (self.len.read() == 0) {
+                            panic!("No memory left, len: 0x{:x}", self.len.read());
+                        }
+
+                        self.head.write(next);
+                    } else {
+                        prev.read_volatile().next.write(next);
+                    }
+
+                    if next.is_null() {
+                        if prev.is_null() || (self.len.read() == 0) {
+                            panic!("No memory left, len: 0x{:x}", self.len.read());
+                        }
+
+                        self.tail.write(prev);
+                    } else {
+                        next.read_volatile().prev.write(prev);
+                    }
+
+                    self.len.write(self.len.read() - frames);
+
+                    return Some(base.unwrap().read() as *mut u8);
                 }
 
-                if (base.unwrap() as usize + 0x1000) == (buffer.unwrap() as usize) {
+                let buffer = base.unwrap().read().read_volatile().next();
+
+                if buffer == None {
+                    panic!("No memory found out of {} frames hit at entry {:?}", self.len.read(), base.unwrap().read().read_volatile());
+                }
+
+                if (base.unwrap().read() as usize + 0x1000) == (buffer.unwrap().read() as usize) {
                     cur_frames_found += 1;
                 } else {
                     cur_frames_found = 1;
@@ -112,31 +168,27 @@ impl FreeList {
                 }
 
                 base = buffer;
-
-                if cur_frames_found == frames {
-                    return Some(current_base.unwrap() as *mut u8);
-                }
             }
         }
-        
-        None
+
+        panic!("No memory found out of {} frames", self.len.read());
     }
 }
 
 unsafe impl Send for FreeList {}
 unsafe impl Sync for FreeList {}
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 struct FreeListEntry {
-    prev: *mut FreeListEntry,
-    next: *mut FreeListEntry,
+    prev: VolatileCell<*mut FreeListEntry>,
+    next: VolatileCell<*mut FreeListEntry>,
 }
 
 impl Iterator for FreeListEntry {
-    type Item = *mut FreeListEntry;
+    type Item = VolatileCell<*mut FreeListEntry>;
 
-    fn next(&mut self) -> Option<*mut FreeListEntry> {
-        if self.next != core::ptr::null_mut() {
+    fn next(&mut self) -> Option<VolatileCell<*mut FreeListEntry>> {
+        if self.next.read() != core::ptr::null_mut() {
             Some(self.next)
         } else {
             None

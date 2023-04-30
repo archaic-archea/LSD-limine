@@ -36,10 +36,8 @@ pub fn init_tls() {
 
         let tls_base = pmm::REGION_LIST.lock().claim_frames(frames).unwrap();
 
-        let tls_base_phys = tls_base as u64 - HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-
         for offset in 0..tdata_size {
-            let read_addr = linker::__tdata_start.as_ptr().cast_mut().byte_add(offset);
+            let read_addr = linker::__tdata_start.as_ptr().byte_add(offset);
             let write_addr = tls_base.byte_add(offset);
 
             let read = *read_addr;
@@ -48,13 +46,14 @@ pub fn init_tls() {
 
         core::arch::asm!(
             "mv tp, {tls}",
-            tls = in(reg) tls_base_phys
+            tls = in(reg) tls_base
         );
     }
 }
 
 bitfield::bitfield! {
     #[derive(Copy, Clone)]
+    #[repr(transparent)]
     pub struct PhysicalAddress(u64);
     impl Debug;
     u64;
@@ -92,6 +91,7 @@ impl PhysicalAddress {
 
 bitfield::bitfield! {
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    #[repr(transparent)]
     pub struct VirtualAddress(u64);
     impl Debug;
     u64;
@@ -147,14 +147,16 @@ impl VirtualAddress {
         }
     }
 
-    pub fn index(&self, index: usize) -> u64 {
+    pub fn index(&self, index: vmm::PageLevel) -> u64 {
+        use vmm::PageLevel;
+
         match index {
-            1 => self.get_vpn0(),
-            2 => self.get_vpn1(),
-            3 => self.get_vpn2(),
-            4 => self.get_vpn3(),
-            5 => self.get_vpn4(),
-            _ => panic!("Indexed too far")
+            PageLevel::Level1 => self.get_vpn0(),
+            PageLevel::Level2 => self.get_vpn1(),
+            PageLevel::Level3 => self.get_vpn2(),
+            PageLevel::Level4 => self.get_vpn3(),
+            PageLevel::Level5 => self.get_vpn4(),
+            PageLevel::PageOffset => self.get_page_offset(),
         }
     }
 }
@@ -185,4 +187,28 @@ impl<A> Locked<A> {
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
+}
+
+/// All reads/writes are volatile
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub struct VolatileCell<T>(T);
+
+impl<T> VolatileCell<T> {
+    pub fn write(&mut self, val: T) {
+        let ptr = core::ptr::addr_of_mut!(self.0);
+        unsafe {
+            ptr.write_volatile(val);
+        }
+    }
+
+    pub fn read(&self) -> T {
+        let ptr = core::ptr::addr_of!(self.0);
+        unsafe {
+            return ptr.read_volatile();
+        }
+    }
+
+    pub const fn new(val: T) -> Self {
+        Self(val)
+    }
 }

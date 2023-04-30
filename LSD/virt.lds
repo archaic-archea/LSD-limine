@@ -25,8 +25,18 @@ SECTIONS {
     .dynstr                 : { *(.dynstr) }
     .rela                   : { *(.rela*) }
     .dynamic                : { *(.dynamic) }
-    .got                    : { *(.got) }
-    .data.rel.ro            : { *(.data.rel.ro*) }
+    .got                    : ALIGN(4K) { *(.got) }
+
+    .tdata                   : ALIGN(4K) { 
+        PROVIDE(__tdata_start = .);
+        *(.tdata .tdata.*) 
+    }
+    .tbss                    : ALIGN(4K) { 
+        *(.tbss .tbss.*) 
+        PROVIDE(__tdata_end = .);
+    }
+
+    .data.rel.ro            : ALIGN(4K) { *(.data.rel.ro*) }
     .data                   : ALIGN(4K) { *(.data .data.*) }
     PROVIDE(__global_pointer = .);
     .bss                    : ALIGN(4K) {
@@ -37,11 +47,6 @@ SECTIONS {
         . = ALIGN(128);
         PROVIDE(__stack_top = .);
     }
-
-    PROVIDE(__tdata_start = .);
-    .tdata                   : ALIGN(4K) { *(.tdata .tdata.*) }
-    .tbss                    : ALIGN(4K) { *(.tbss .tbss.*) }
-    PROVIDE(__tdata_end = .);
 
     PROVIDE(__image_end = .);
 }

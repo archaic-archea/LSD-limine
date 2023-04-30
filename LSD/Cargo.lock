@@ -73,15 +73,33 @@ dependencies = [
  "fdt",
  "limine",
  "log",
+ "sbi",
+ "sifive-plic",
  "spin",
  "vmem",
 ]
+
+[[package]]
+name = "sbi"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29cb0870400aca7e4487e8ec1e93f9d4288da763cb1da2cedc5102e62b6522ad"
 
 [[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
+
+[[package]]
+name = "sifive-plic"
+version = "1.0.0"
+source = "git+https://github.com/archaic-archea/sifive-plic#4633d9a546b1483895f88f5ba4c43beeea823eca"
+dependencies = [
+ "fdt",
+ "log",
+ "volatile",
+]
 
 [[package]]
 name = "spin"
@@ -101,3 +119,8 @@ dependencies = [
  "log",
  "spin",
 ]
+
+[[package]]
+name = "volatile"
+version = "1.0.0"
+source = "git+https://github.com/archaic-archea/volatile#e824bfb9b46ded1b90a2f5c68d8d38eb7899d602"

@@ -41,10 +41,12 @@ fn main() -> anyhow::Result<()> {
                 qemu-system-riscv64
                     -machine virt
                     -cpu rv64
-                    -smp 2
-                    -m 4G
+                    -smp 3
+                    -m 512M
                     -bios opensbi-riscv64-generic-fw_jump.bin
                     -kernel config/spark-riscv-sbi-release.bin
+                    -global virtio-mmio.force-legacy=false
+                    -device virtio-gpu-device
                     -device nvme,serial=deadbeff,drive=disk1
                     -drive id=disk1,format=raw,if=none,file=fat:rw:./root
                     -serial mon:stdio
