@@ -155,7 +155,7 @@ impl FreeList {
 
                         self.tail.write(prev);
                     } else {
-                        next.read_volatile().prev.write(prev);
+                        (*next).prev.write(prev);
                     }
 
                     self.len.write(self.len.read() - frames);

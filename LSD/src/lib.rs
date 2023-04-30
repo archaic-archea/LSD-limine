@@ -103,18 +103,8 @@ pub fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb: *cons
     let claim = LOWER_HALF.alloc(0x8000, vmem::AllocStrategy::InstantFit, true).unwrap();
     println!("Claim 0x{:x}", claim);
 
-    timing::Unit::Seconds(8).wait().unwrap();
-
     unsafe {
-        //use memory::vmm;
-        //let level = vmm::LEVELS.load(Ordering::Relaxed);
-        //let level = vmm::PageLevel::from_usize(level as usize);
-
-        core::arch::riscv64::wfi();
-        //memory::vmm::unmap(vmm::current_table(), memory::VirtualAddress(claim as u64), level, vmm::PageLevel::Level1);
         LOWER_HALF.free(claim, 0x8000);
-
-        core::arch::riscv64::wfi();
     }
 }
 

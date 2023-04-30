@@ -82,14 +82,8 @@ fn smp_init() {
     for core in SMP.response().unwrap().cpus() {
         let hart_id = core.hartid;
         if hart_id != SMP.response().unwrap().bsp_hartid {
-            unsafe {
-                core::arch::riscv64::wfi();
-            }
             println!("Making new upperhalf for new cpu");
             let new_satp = lsd::memory::vmm::new_with_upperhalf() as u64;
-            unsafe {
-                core::arch::riscv64::wfi();
-            }
             let new_satp_phys = new_satp - lsd::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
 
             let mut satp = lsd::memory::vmm::Satp::new();
