@@ -61,7 +61,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
                     map(current_table().cast_mut(), virt, claim_phys, level, PageLevel::Level1, &mut pmm::REGION_LIST.lock());
                 }
 
-                flush_tlb(None, None);
+                flush_tlb(Some(virt), None);
             }
         }
 
@@ -82,7 +82,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
 
-            flush_tlb(None, None);
+            flush_tlb(Some(virt), None);
         }
     }
 
@@ -243,7 +243,8 @@ pub unsafe fn unmap(
         let table_index = virt.index(level);
 
         if level == target_level {
-            let entry = &mut (*table).0[table_index as usize];
+            let mut table_copy = table.read_volatile();
+            let entry = &mut table_copy.0[table_index as usize];
 
             if !entry.is_leaf() {
                 panic!("No leaf found while unmapping");
@@ -253,9 +254,11 @@ pub unsafe fn unmap(
             let return_addr = entry.get_ppn() << 12;
             entry.set_valid(false);
 
+            table.write_volatile(table_copy);
+
             return PhysicalAddress(return_addr);
         } else {
-            let entry = (*table).0[table_index as usize].clone();
+            let entry = table.read_volatile().0[table_index as usize];
 
             if entry.is_leaf() {
                 panic!("Unexpected entry");
@@ -278,7 +281,7 @@ pub unsafe fn unmap(
 }
 
 pub unsafe fn map(
-    table: *const PageTable,
+    table: *mut PageTable,
     virt: VirtualAddress, 
     phys: PhysicalAddress, 
     level: PageLevel, 
@@ -290,36 +293,46 @@ pub unsafe fn map(
 
     loop {
         let table_index = virt.index(level);
-        
-        let entry = &(*table).0[table_index as usize];
-        let mut_entry = &mut (*table.cast_mut()).0[table_index as usize];
 
         if level == target_level {
+            let mut table_copy = table.read_volatile();
+            let entry = &mut table_copy.0[table_index as usize];
+
             println!("Made leaf at index {} of table {:?}", table_index, table);
-            mut_entry.set_ppn(phys.get_ppn());
-            mut_entry.set_valid(true);
-            mut_entry.set_read(true);
-            mut_entry.set_write(true);
-            mut_entry.set_exec(true);
+            entry.set_ppn(phys.get_ppn());
+            entry.set_valid(true);
+            entry.set_read(true);
+            entry.set_write(true);
+            entry.set_exec(true);
+
+            table.write_volatile(table_copy);
             return;
+        } else {
+            let mut table_copy = table.read_volatile();
+            let entry = table_copy.0[table_index as usize];
+
+            if entry.is_branch() {
+                println!("Found table at index {} of table {:?}", table_index, table);
+                table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
+            } else if entry.is_leaf() {
+                panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
+            } else if !entry.get_valid() {
+                let entry = &mut table_copy.0[table_index as usize];
+
+                println!("Made table at index {} of table {:?}", table_index, table);
+                let new_table = pmm_lock.claim() as *mut PageTable;
+                let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+
+                entry.set_ppn(new_table_phys >> 12);
+                entry.set_valid(true);
+
+                table.write_volatile(table_copy);
+
+                table = new_table;
+            }
+
+            level = PageLevel::from_usize(level.as_usize() - 1);
         }
-
-        if entry.is_branch() {
-            println!("Found table at index {} of table {:?}", table_index, table);
-            table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
-        } else if entry.is_leaf() {
-            panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
-        } else if !entry.get_valid() {
-            println!("Made table at index {} of table {:?}", table_index, table);
-            let new_table = pmm_lock.claim() as *mut PageTable;
-            let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-
-            mut_entry.set_ppn(new_table_phys >> 12);
-            mut_entry.set_valid(true);
-            table = new_table;
-        }
-
-        level = PageLevel::from_usize(level.as_usize() - 1);
     }
 }
 
