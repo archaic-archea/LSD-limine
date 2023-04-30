@@ -25,7 +25,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
     pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, contiguous: bool) -> Result<usize, vmem::Error> {
         let section = self.0.alloc(size, strategy);
 
-        if !section.is_err() {
+        if section.is_ok() {
             let section_data = section.as_ref().unwrap();
 
             let mut frames = size / 4096;
@@ -65,9 +65,11 @@ impl<'a, 'b> Vmm <'a, 'b> {
             }
         }
 
-        return section;
+        section
     }
 
+    /// # Safety
+    /// The segment must have previously been allocated by a call to alloc().
     pub unsafe fn free(&self, base: usize, size: usize) {
         self.0.free(base, size);
 
@@ -99,7 +101,7 @@ pub fn new_with_upperhalf() -> *mut PageTable {
         clone_table_range(&*current_table(), &mut *new_table, 256..512);
     }
 
-    return new_table;
+    new_table
 }
 
 pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
@@ -120,7 +122,7 @@ pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
 }
 
 pub fn init() {
-    let fdt_ptr = crate::FDT_PTR.lock().clone() as *const u8;
+    let fdt_ptr = (*crate::FDT_PTR.lock()) as *const u8;
     let fdt = unsafe {fdt::Fdt::from_ptr(fdt_ptr).expect("Invalid FDT ptr")};
     let node = fdt.find_node("/cpus/cpu@0").unwrap();
     let mmu_type = node.property("mmu-type").unwrap().as_str().unwrap();
@@ -159,8 +161,8 @@ pub fn init() {
 
     println!("Mapping IO");
     for i in (0..0x8000_0000_u64).step_by(PageSize::Large as usize) {
-        let virt = VirtualAddress::new(0xffffffff80000000).add(i as u64);
-        let phys = PhysicalAddress::new(0x00).add(i as u64);
+        let virt = VirtualAddress::new(0xffffffff80000000).add(i);
+        let phys = PhysicalAddress::new(0x00).add(i);
 
         let level = PageLevel::from_usize(
             LEVELS.load(Ordering::Relaxed)as usize
@@ -196,11 +198,11 @@ pub fn init() {
 
 pub fn clone_table_range(src: &PageTable, dest: &mut PageTable, range: core::ops::Range<usize>) {
     for index in range {
-        let src_entry = &(*src).0[index];
-        let dest_entry = &mut (*dest).0[index];
+        let src_entry = &src.0[index];
+        let dest_entry = &mut dest.0[index];
 
         if src_entry.is_branch() {
-            *dest_entry = src_entry.clone();
+            *dest_entry = *src_entry;
 
             let new_claim = pmm::REGION_LIST.lock().claim() as u64;
             let phys_new_claim = new_claim - super::HHDM_OFFSET.load(Ordering::Relaxed);
@@ -211,7 +213,7 @@ pub fn clone_table_range(src: &PageTable, dest: &mut PageTable, range: core::ops
                 clone_table_range(&*src_entry.table(), &mut *dest_entry.table().cast_mut(), 0..512);
             }
         } else if src_entry.is_leaf() {
-            *dest_entry = src_entry.clone();
+            *dest_entry = *src_entry;
         } else {
             *dest_entry = PageEntry(0);
         }
@@ -226,9 +228,11 @@ pub fn current_table() -> *const PageTable {
 
     let virt = phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-    return virt as *mut PageTable;
+    virt as *mut PageTable
 }
 
+/// # Safety
+/// Only safe from a kernel perspective when unmapping the lower half
 pub unsafe fn unmap(
     table: *mut PageTable,
     virt: VirtualAddress,
@@ -270,7 +274,7 @@ pub unsafe fn unmap(
                 let next_table_phys = entry.get_ppn() << 12;
                 let next_table = next_table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-                let tmp = table.clone();
+                let tmp = table;
                 table = next_table as *mut PageTable;
 
                 println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
@@ -283,6 +287,8 @@ pub unsafe fn unmap(
     }
 }
 
+/// # Safety
+/// Only safe from a kernel perspective when mapping the lower half
 pub unsafe fn map(
     table: *mut PageTable,
     virt: VirtualAddress, 
@@ -432,17 +438,13 @@ pub struct PageTable([PageEntry; 512]);
 
 impl core::fmt::Debug for PageTable {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut index = 0;
-
-        for entry in self.0.iter() {
+        for (index, entry) in self.0.iter().enumerate() {
             if entry.get_valid() {
                 write!(f, "index {index}: 0x{:x}", entry.0)?;
                 if index < 511 {
                     writeln!(f, ",")?;
                 }
             }
-
-            index += 1;
         }
 
         Ok(())
@@ -472,25 +474,25 @@ bitfield::bitfield!{
 
 impl PageEntry {
     pub fn is_branch(&self) -> bool {
-        return self.get_valid() && (
+        self.get_valid() && (
             (!self.get_read()) && 
             (!self.get_write()) && 
             (!self.get_exec()) &&
             (!self.get_user()) &&
             (!self.get_accessed()) &&
             (!self.get_dirty())
-        );
+        )
     }
 
     pub fn is_leaf(&self) -> bool {
-        return self.get_valid() && (self.get_read() || self.get_write() || self.get_exec());
+        self.get_valid() && (self.get_read() || self.get_write() || self.get_exec())
     }
 
     pub fn table(&self) -> *const PageTable {
         let table_phys = self.get_ppn() << 12;
         let table = table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-        return table as *const PageTable;
+        table as *const PageTable
     }
 }
 
@@ -504,6 +506,8 @@ bitfield::bitfield!{
 }
 
 impl Satp {
+    /// # Safety
+    /// Only safe after having copied the upper-half of memory from the current map
     pub unsafe fn set(&self) {
         core::arch::asm!("csrw satp, {new}", new = in(reg) self.0);
         flush_tlb(None, None);
@@ -516,9 +520,13 @@ impl Satp {
             core::arch::asm!("csrr {new}, satp", new = out(reg) new_satp);
         }
 
-        let new_satp = unsafe {core::mem::transmute(new_satp)};
+        unsafe {core::mem::transmute(new_satp)}
+    }
+}
 
-        return new_satp;
+impl Default for Satp {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -545,7 +553,7 @@ pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static st
 
                 let inv_mask = !mask;
 
-                addr.0 = addr.0 & inv_mask;
+                addr.0 &= inv_mask;
                 addr.0 |= virt.0 & mask;
 
                 println!("Mask level {levels:?}");

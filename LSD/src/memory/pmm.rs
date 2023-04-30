@@ -133,7 +133,7 @@ impl FreeList {
             let mut current_base = Some(self.head);
             let mut base = Some(self.head);
 
-            while base != None {
+            while base.is_some() {
                 if cur_frames_found == frames {
                     let prev = (*current_base.unwrap().read()).prev.read();
                     let next = (*base.unwrap().read()).next.read();
@@ -165,7 +165,7 @@ impl FreeList {
 
                 let buffer = base.unwrap().read().read_volatile().next();
 
-                if buffer == None {
+                if buffer.is_none() {
                     panic!("No memory found out of {} frames hit at entry {:?}", self.len.read(), base.unwrap().read().read_volatile());
                 }
 
@@ -197,7 +197,7 @@ impl Iterator for FreeListEntry {
     type Item = VolatileCell<*mut FreeListEntry>;
 
     fn next(&mut self) -> Option<VolatileCell<*mut FreeListEntry>> {
-        if self.next.read() != core::ptr::null_mut() {
+        if self.next.read().is_null() {
             Some(self.next)
         } else {
             None

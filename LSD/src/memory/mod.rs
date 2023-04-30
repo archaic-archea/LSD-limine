@@ -204,7 +204,7 @@ impl<T> VolatileCell<T> {
     pub fn read(&self) -> T {
         let ptr = core::ptr::addr_of!(self.0);
         unsafe {
-            return ptr.read_volatile();
+            ptr.read_volatile()
         }
     }
 

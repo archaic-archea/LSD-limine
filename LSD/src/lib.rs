@@ -80,14 +80,12 @@ pub fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb: *cons
             let ptr = (ptr + IO_OFFSET) as *mut drivers::virtio::VirtIOHeader;
             
             unsafe {
-                if (*ptr).is_valid() {
-                    if (*ptr).dev_id.read() != drivers::virtio::DeviceType::Reserved {
-                        for region in node.reg().unwrap() {
-                            println!("Found region {:?}", region);
-                        }
-                        println!("Found valid VirtIO {:?} device", (*ptr).dev_id.read());
-                        drivers::virtio::VIRTIO_LIST.lock().push(AtomicPtr::new(ptr));
+                if (*ptr).is_valid() && ((*ptr).dev_id.read() != drivers::virtio::DeviceType::Reserved) {
+                    for region in node.reg().unwrap() {
+                        println!("Found region {:?}", region);
                     }
+                    println!("Found valid VirtIO {:?} device", (*ptr).dev_id.read());
+                    drivers::virtio::VIRTIO_LIST.lock().push(AtomicPtr::new(ptr));
                 }
             }
         }
@@ -144,5 +142,5 @@ pub fn current_context() -> usize {
     let id = HART_ID.load(Ordering::Relaxed);
 
     // Assume we're on qemu
-    return 1 + (2 * id);
+    1 + (2 * id)
 }
