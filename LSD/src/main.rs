@@ -44,8 +44,11 @@ extern "C" fn kmain() -> ! {
     }
 
     smp_init();
+    
+    let root_table = unsafe {&*lsd::memory::vmm::current_table()};
+    let table_3 = unsafe {&*root_table.0[0].table()};
 
-    lsd::println!("Kernel end, looping");
+    lsd::println!("Kernel end, table dump:\n{root_table:?}\n\n{table_3:?}");
 
     pause_loop()
 }

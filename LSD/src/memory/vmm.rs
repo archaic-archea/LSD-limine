@@ -98,7 +98,7 @@ pub fn new_with_upperhalf() -> *mut PageTable {
     let new_table = pmm::REGION_LIST.lock().claim() as *mut PageTable;
 
     unsafe {
-        clone_table_range(&*current_table(), &mut *new_table, 256..512);
+        clone_table_range(current_table(), new_table, 256..512);
     }
 
     new_table
@@ -121,7 +121,9 @@ pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
     }
 }
 
-pub fn init() {
+/// # Safety
+/// Must only be called once on the boot strap processor
+pub unsafe fn init() {
     let fdt_ptr = (*crate::FDT_PTR.lock()) as *const u8;
     let fdt = unsafe {fdt::Fdt::from_ptr(fdt_ptr).expect("Invalid FDT ptr")};
     let node = fdt.find_node("/cpus/cpu@0").unwrap();
@@ -152,6 +154,9 @@ pub fn init() {
     println!("Memory size: {:?}MiB", memory_size / 1048576);
 
     let root_table_claim = pmm::REGION_LIST.lock().claim() as *mut PageTable;
+    for entry in (*root_table_claim).0.iter_mut() {
+        entry.0 = 0;
+    }
 
     unsafe {
         clone_table_range(&*current_table(), &mut *root_table_claim, 256..512);
@@ -196,23 +201,23 @@ pub fn init() {
     println!("Virtual memory initialized");
 }
 
-pub fn clone_table_range(src: &PageTable, dest: &mut PageTable, range: core::ops::Range<usize>) {
+/// # Safety
+/// Only run on an unloaded table
+pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
     for index in range {
-        let src_entry = &src.0[index];
-        let dest_entry = &mut dest.0[index];
+        let src_entry = (src as *mut PageEntry).add(index);
+        let dest_entry = (dest as *mut PageEntry).add(index);
 
-        if src_entry.is_branch() {
+        if (*src_entry).is_branch() {
             *dest_entry = *src_entry;
 
             let new_claim = pmm::REGION_LIST.lock().claim() as u64;
             let phys_new_claim = new_claim - super::HHDM_OFFSET.load(Ordering::Relaxed);
-
-            dest_entry.set_ppn(phys_new_claim >> 12);
-
-            unsafe {
-                clone_table_range(&*src_entry.table(), &mut *dest_entry.table().cast_mut(), 0..512);
-            }
-        } else if src_entry.is_leaf() {
+            
+            (*dest_entry).set_ppn(phys_new_claim >> 12);
+            
+            clone_table_range((*src_entry).table(), (*dest_entry).table().cast_mut(), 0..512);
+        } else if (*src_entry).is_leaf() {
             *dest_entry = *src_entry;
         } else {
             *dest_entry = PageEntry(0);
@@ -330,6 +335,10 @@ pub unsafe fn map(
 
                 //println!("Made table at index {} of table {:?}", table_index, table);
                 let new_table = pmm_lock.claim() as *mut PageTable;
+                for entry in (*new_table).0.iter_mut() {
+                    entry.0 = 0;
+                }
+
                 let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
 
                 entry.set_ppn(new_table_phys >> 12);
@@ -434,7 +443,7 @@ impl ops::Add<usize> for PageLevel {
 }
 
 #[repr(transparent)]
-pub struct PageTable([PageEntry; 512]);
+pub struct PageTable(pub [PageEntry; 512]);
 
 impl core::fmt::Debug for PageTable {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -454,7 +463,7 @@ impl core::fmt::Debug for PageTable {
 bitfield::bitfield!{
     #[derive(Copy, Clone)]
     #[repr(transparent)]
-    struct PageEntry(u64);
+    pub struct PageEntry(u64);
     impl Debug;
     u64;
     get_valid, set_valid: 0;
