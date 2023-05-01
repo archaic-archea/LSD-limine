@@ -228,34 +228,6 @@ pub fn current_table() -> *const PageTable {
     virt as *mut PageTable
 }
 
-/// Removes empty tables and returns if the source table was empty
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn clean_tables(table: *mut PageTable, range: core::ops::Range<usize>) -> bool {
-    let mut empty = true;
-
-    for index in range {
-        let entry = unsafe {&mut (*table).0[index]};
-        
-        if entry.is_branch() {
-            let addr = entry.get_ppn() << 12;
-            let addr = addr + super::HHDM_OFFSET.load(Ordering::Relaxed);
-
-            if clean_tables(entry.table().cast_mut(), 0..512) {
-                entry.0 = 0;
-                unsafe {
-                    pmm::REGION_LIST.lock().pull(addr as *mut u8);
-                }
-            } else {
-                empty = false;
-            }
-        } else if entry.is_leaf() {
-            empty = false;
-        }
-    }
-
-    empty
-}
-
 /// # Safety
 /// Only safe from a kernel perspective when unmapping the lower half
 pub unsafe fn unmap(
