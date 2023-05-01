@@ -126,9 +126,9 @@ impl FreeList {
         og_head as *mut u8
     }
 
-    pub fn claim_continuous(&mut self, frames: usize) -> Option<*mut u8> {
+    pub fn claim_continuous(&mut self, frames: usize) -> Result<*mut u8, alloc::string::String> {
         if frames == 1 {
-            return Some(self.claim());
+            return Ok(self.claim());
         }
 
         // Store the head as a current entry, as well as the base entry of this contigous section
@@ -153,7 +153,7 @@ impl FreeList {
                         (*next).prev = previous;
                     }
 
-                    return Some(base_entry as *mut u8);
+                    return Ok(base_entry as *mut u8);
                 }
             } else {
                 unsafe {
@@ -172,7 +172,7 @@ impl FreeList {
         }
 
         // Return none if we couldnt find a contigous piece of memory large enough
-        None
+        Err(alloc::format!("Couldnt find contiguous frames out of {} frames", self.len))
     }
 }
 

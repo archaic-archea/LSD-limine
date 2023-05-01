@@ -34,7 +34,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
                 frames += 1;
             }
 
-            let mut claim: Option<*mut u8>;
+            let mut claim: Result<*mut u8, alloc::string::String>;
             let mut claim_phys = PhysicalAddress(0);
 
             if contiguous {
@@ -44,7 +44,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             for offset in (0..size).step_by(4096) {
                 if !contiguous {
-                    claim = Some(pmm::REGION_LIST.lock().claim());
+                    claim = Ok(pmm::REGION_LIST.lock().claim());
                     claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
                 } else {
                     claim_phys.0 += 4096;
@@ -208,16 +208,8 @@ pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, ran
         let src_entry = (src as *mut PageEntry).add(index);
         let dest_entry = (dest as *mut PageEntry).add(index);
 
-        if (*src_entry).is_branch() {
+        if (*src_entry).get_valid() {
             *dest_entry = *src_entry;
-
-            let new_claim = pmm::REGION_LIST.lock().claim() as u64;
-            let phys_new_claim = new_claim - super::HHDM_OFFSET.load(Ordering::Relaxed);
-            
-            (*dest_entry).set_ppn(phys_new_claim >> 12);
-            
-            clone_table_range((*src_entry).table(), (*dest_entry).table().cast_mut(), 0..512);
-        } else if (*src_entry).is_leaf() {
             *dest_entry = *src_entry;
         } else {
             *dest_entry = PageEntry(0);
@@ -234,6 +226,34 @@ pub fn current_table() -> *const PageTable {
     let virt = phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
     virt as *mut PageTable
+}
+
+/// Removes empty tables and returns if the source table was empty
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn clean_tables(table: *mut PageTable, range: core::ops::Range<usize>) -> bool {
+    let mut empty = true;
+
+    for index in range {
+        let entry = unsafe {&mut (*table).0[index]};
+        
+        if entry.is_branch() {
+            let addr = entry.get_ppn() << 12;
+            let addr = addr + super::HHDM_OFFSET.load(Ordering::Relaxed);
+
+            if clean_tables(entry.table().cast_mut(), 0..512) {
+                entry.0 = 0;
+                unsafe {
+                    pmm::REGION_LIST.lock().pull(addr as *mut u8);
+                }
+            } else {
+                empty = false;
+            }
+        } else if entry.is_leaf() {
+            empty = false;
+        }
+    }
+
+    empty
 }
 
 /// # Safety
