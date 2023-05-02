@@ -23,6 +23,16 @@ pub struct Uart16550 {
     scratch: Volatile<u8>,
 }
 
+impl Uart16550 {
+    pub fn set_int(&mut self) {
+        self.interrupt_enable.write(1);
+    }
+
+    pub fn clear_int(&mut self) {
+        self.interrupt_enable.write(0);
+    }
+}
+
 use core::fmt;
 
 impl fmt::Write for Uart16550 {

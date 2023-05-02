@@ -70,6 +70,7 @@ name = "lsd"
 version = "0.1.0"
 dependencies = [
  "bitfield",
+ "bitflags 2.2.1",
  "fdt",
  "limine",
  "log",
@@ -113,9 +114,9 @@ dependencies = [
 [[package]]
 name = "vmem"
 version = "0.1.0"
-source = "git+https://github.com/xvanc/vmem.git#eae7f182bed35908b8f0e582bad6ba50b40121ae"
+source = "git+https://github.com/archaic-archea/vmem.git#80b051ec37cc9c62ed3d3566cd4656c7676e21aa"
 dependencies = [
- "bitflags 2.2.1",
+ "bitflags 1.3.2",
  "log",
  "spin",
 ]

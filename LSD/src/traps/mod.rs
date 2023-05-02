@@ -7,10 +7,22 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::println;
+use crate::{println, current_context};
 
 pub mod plic;
 pub mod task;
+
+/// # Safety
+/// Only call once ever
+pub unsafe fn plic_init() {
+    let plic = plic::PLIC_ADDR.load(Ordering::Relaxed);
+
+    let context = current_context();
+    let contexts = context..=context;
+    (*plic).init(64, contexts);
+    (*plic).set_context_threshold(context, 0x1);
+    println!("Initialized plic");
+}
 
 pub fn init() {
     unsafe {
@@ -291,7 +303,30 @@ pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize
             crate::timing::Unit::Seconds(8).wait().unwrap();
 
             return;
-        }
+        },
+        Trap::StorePageFault => {
+            if stval == 0xffffffff90000000 {
+                unsafe {
+                    crate::uart::UART.force_unlock();
+
+                    crate::uart::UART.lock().0 = (0x1000_0000 + crate::memory::HHDM_OFFSET.load(Ordering::Relaxed)) as *mut crate::uart::Uart16550;
+                }
+                println!("Failed to map UART, using HHDM UART");
+
+                // Forget lock so it is locked when returned to the faulting area
+                let _lock = crate::uart::UART.lock();
+                core::mem::forget(_lock);
+            } else {
+                println!("{:#x?}", regs);
+    
+                println!("Cause: {:?}", trap);
+                println!("Stval: 0x{:x}", stval);
+            }
+        },
+        Trap::SupervisorExternalInterrupt => {
+            plic::handle_external();
+            return;
+        },
         _ => {
             println!("{:#x?}", regs);
 

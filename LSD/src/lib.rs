@@ -17,7 +17,10 @@
     fn_align,
     stdsimd,
     core_intrinsics,
-    pointer_is_aligned
+    pointer_is_aligned,
+    layout_for_ptr,
+    ptr_metadata,
+    strict_provenance
 )]
 
 extern crate alloc;
@@ -32,11 +35,13 @@ pub mod drivers;
 
 pub mod arch;
 
+use alloc::vec::Vec;
 pub use libs::*;
 use spin::Mutex;
 use core::sync::atomic::{self, AtomicPtr};
 
 static LOWER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("lower_half");
+static HIGHER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("higher_half");
 
 pub static FDT_PTR: Mutex<usize> = Mutex::new(0);
 pub static KERN_PHYS: Mutex<usize> = Mutex::new(0);
@@ -88,7 +93,12 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
                         println!("Found region {:?}", region);
                     }
                     println!("Found valid VirtIO {:?} device", (*ptr).dev_id.read());
-                    drivers::virtio::VIRTIO_LIST.lock().push(AtomicPtr::new(ptr));
+
+                    let ints: Vec<usize> = node.interrupts().unwrap().collect();
+
+                    println!("{:?}", ints);
+
+                    drivers::virtio::VIRTIO_LIST.lock().push((AtomicPtr::new(ptr), ints.leak()));
                 }
             }
         }
@@ -96,17 +106,27 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
 
     if traps::plic::PLIC_ADDR.load(Ordering::Relaxed).is_null() {
         panic!("No plic found");
+    } else {
+        traps::plic_init();
     }
 
     LOWER_HALF.add(0x1000, (hhdm_start - 0x1001) as usize).unwrap();
+
+    for index in 256..512 {
+        let entry = &(*memory::vmm::current_table()).0[index];
+        let mut vaddr = memory::VirtualAddress(u64::MAX);
+        let levels = memory::vmm::LEVELS.load(Ordering::Relaxed) as usize;
+        let levels = memory::vmm::PageLevel::from_usize(levels);
+
+        vaddr.set_index(levels, index as u64);
+        if !entry.get_valid() {
+            HIGHER_HALF.add(vaddr.0 as usize, levels.as_page_size() as usize).unwrap();
+        }
+    }
+
     println!("Vmem initialized");
 
-    let claim = LOWER_HALF.alloc(0x8000, vmem::AllocStrategy::InstantFit, true).unwrap();
-    println!("Claim 0x{:x}", claim);
-
-    unsafe {
-        LOWER_HALF.free(claim, 0x8000);
-    }
+    drivers::virtio::init();
 }
 
 pub struct IOPtr<T>(*mut T)

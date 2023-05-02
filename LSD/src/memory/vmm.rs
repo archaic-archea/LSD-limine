@@ -15,63 +15,156 @@ use super::{VirtualAddress, PhysicalAddress, pmm};
 
 pub static LEVELS: AtomicU8 = AtomicU8::new(0);
 
-pub struct Vmm <'a, 'b>(vmem::Vmem<'a, 'b>);
+pub struct Vmm <'a, 'b>(pub vmem::Vmem<'a, 'b>);
 
 impl<'a, 'b> Vmm <'a, 'b> {
     pub const fn new(name: &'static str) -> Self {
         Self(vmem::Vmem::new(alloc::borrow::Cow::Borrowed(name), 1, None))
     }
 
-    pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, contiguous: bool) -> Result<usize, vmem::Error> {
-        let section = self.0.alloc(size, strategy);
+    pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
+        let section = self.0.alloc(size, strategy)?;
 
-        if section.is_ok() {
-            let section_data = section.as_ref().unwrap();
+        let mut return_val = (0, None);
 
-            let mut frames = size / 4096;
+        let section_data = section;
+        return_val.0 = section_data;
 
-            if (size % 4096) != 0 {
-                frames += 1;
-            }
+        let mut frames = size / 4096;
 
-            let mut claim: Result<*mut u8, alloc::string::String>;
-            let mut claim_phys = PhysicalAddress(0);
+        if (size % 4096) != 0 {
+            frames += 1;
+        }
 
-            if contiguous {
-                claim = pmm::REGION_LIST.lock().claim_continuous(frames);
+        let mut claim: Result<*mut u8, alloc::string::String>;
+        let mut claim_phys = PhysicalAddress(0);
+
+        if physically_contiguous {
+            claim = pmm::REGION_LIST.lock().claim_continuous(frames);
+            claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+            return_val.1 = Some(claim_phys);
+        }
+
+        for offset in (0..size).step_by(4096) {
+            if !physically_contiguous {
+                claim = Ok(pmm::REGION_LIST.lock().claim());
                 claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
             }
 
-            for offset in (0..size).step_by(4096) {
-                if !contiguous {
-                    claim = Ok(pmm::REGION_LIST.lock().claim());
-                    claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
-                } else {
-                    claim_phys.0 += 4096;
-                }
-                println!("Mapping 0x{:x}", claim_phys.0);
+            let level = PageLevel::from_usize(
+                LEVELS.load(Ordering::Relaxed)as usize
+            );
 
-                let level = PageLevel::from_usize(
-                    LEVELS.load(Ordering::Relaxed)as usize
+            let virt = VirtualAddress((section_data + offset) as u64);
+
+            unsafe {
+                map(
+                    current_table().cast_mut(), 
+                    virt, 
+                    claim_phys, 
+                    level, 
+                    PageLevel::Level1, 
+                    &mut pmm::REGION_LIST.lock(),
+                    flags
                 );
+            }
 
-                let virt = VirtualAddress((*section_data + offset) as u64);
+            flush_tlb(Some(virt), None);
 
-                unsafe {
-                    map(current_table().cast_mut(), virt, claim_phys, level, PageLevel::Level1, &mut pmm::REGION_LIST.lock());
-                }
-
-                flush_tlb(Some(virt), None);
+            if physically_contiguous { 
+                claim_phys.0 += 4096;
             }
         }
 
-        section
+        Ok(return_val)
     }
 
+    /// Free a segment allocated by `alloc`
     /// # Safety
-    /// The segment must have previously been allocated by a call to alloc().
+    /// The segment must have previously been allocated by a call to `alloc`
+    /// # Panics
+    /// This function panics if the segment cannot be found in the allocation hash table.
     pub unsafe fn free(&self, base: usize, size: usize) {
         self.0.free(base, size);
+
+        for offset in (0..size).step_by(4096) {
+            let virt = VirtualAddress((base + offset) as u64);
+
+            let level = PageLevel::from_usize(
+                LEVELS.load(Ordering::Relaxed)as usize
+            );
+
+            let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
+
+            super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
+
+            flush_tlb(Some(virt), None);
+        }
+    }
+    
+    pub fn alloc_constrained(&self, layout: vmem::Layout, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
+        let section = self.0.alloc_constrained(layout, strategy)?;
+        let size = layout.size();
+
+        let mut return_val = (section, None);
+
+        let section_data = section;
+
+        let mut frames = size / 4096;
+
+        if (size % 4096) != 0 {
+            frames += 1;
+        }
+
+        let mut claim: Result<*mut u8, alloc::string::String>;
+        let mut claim_phys = PhysicalAddress(0);
+
+        if physically_contiguous {
+            claim = pmm::REGION_LIST.lock().claim_continuous(frames);
+            claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+
+            return_val.1 = Some(claim_phys);
+        }
+
+        for offset in (0..size).step_by(4096) {
+            if !physically_contiguous {
+                claim = Ok(pmm::REGION_LIST.lock().claim());
+                claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+            } else {
+                claim_phys.0 += 4096;
+            }
+
+            let level = PageLevel::from_usize(
+                LEVELS.load(Ordering::Relaxed)as usize
+            );
+
+            let virt = VirtualAddress((section_data + offset) as u64);
+
+            unsafe {
+                map(
+                    current_table().cast_mut(), 
+                    virt, 
+                    claim_phys, 
+                    level, 
+                    PageLevel::Level1, 
+                    &mut pmm::REGION_LIST.lock(),
+                    flags
+                );
+            }
+
+            flush_tlb(Some(virt), None);
+        }
+
+        Ok(return_val)
+    }
+
+    /// Free a segment allocated by `alloc_constrained`
+    /// # Safety
+    /// The segment must have previously been allocated by a call to `alloc_constrained`
+    /// # Panics
+    /// This function panics if the segment cannot be found in the allocation hash table.
+    pub unsafe fn free_constrained(&self, base: usize, size: usize) {
+        self.0.free_constrained(base, size);
 
         for offset in (0..size).step_by(4096) {
             let virt = VirtualAddress((base + offset) as u64);
@@ -174,8 +267,18 @@ pub unsafe fn init() {
         
         println!("{:?} 0x{:x} -> 0x{:x}", level, virt.0, phys.0);
 
+        let io_flags = PageFlags::GLOBAL | PageFlags::READ | PageFlags::WRITE;
+
         unsafe {
-            map(root_table_claim, virt, phys, level, PageLevel::Level3, &mut reg_list_lock);
+            map(
+                root_table_claim, 
+                virt, 
+                phys, 
+                level, 
+                PageLevel::Level3, 
+                &mut reg_list_lock,
+                io_flags,
+            );
         }
     }
     println!("Mapped IO");
@@ -200,7 +303,7 @@ pub unsafe fn init() {
     println!("Virtual memory initialized");
 }
 
-/// FIXME: Somehow mutates source table
+/// FIXME: Somehow mutates source table when using for SMP
 /// # Safety
 /// Only run on an unloaded table
 pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
@@ -291,6 +394,7 @@ pub unsafe fn map(
     level: PageLevel, 
     target_level: PageLevel,
     pmm_lock: &mut MutexGuard<super::pmm::FreeList>,
+    flags: PageFlags,
 ) {
     let mut table = table;
     let mut level = level;
@@ -306,10 +410,8 @@ pub unsafe fn map(
             entry.0 = 0;
 
             entry.set_ppn(phys.get_ppn());
+            entry.0 |= flags.bits();
             entry.set_valid(true);
-            entry.set_read(true);
-            entry.set_write(true);
-            entry.set_exec(true);
 
             table.write_volatile(table_copy);
             return;
@@ -348,10 +450,12 @@ pub unsafe fn map(
 
 #[repr(u64)]
 pub enum PageSize {
+    None = 0x0,
     Small = 0x1000,
     Medium = 0x20_0000,
     Large = 0x4000_0000,
     Huge = 0x80_0000_0000,
+    Colossal = 0x1_0000_0000_0000,
 }
 
 #[derive(Debug)]
@@ -405,6 +509,17 @@ impl PageLevel {
             _ => 0
         }
     }
+
+    pub fn as_page_size(&self) -> PageSize {
+        match self {
+            Self::Level1 => PageSize::Small,
+            Self::Level2 => PageSize::Medium,
+            Self::Level3 => PageSize::Large,
+            Self::Level4 => PageSize::Huge,
+            Self::Level5 => PageSize::Colossal,
+            _ => PageSize::None
+        }
+    }
 }
 
 use core::ops;
@@ -452,13 +567,24 @@ impl core::fmt::Debug for PageTable {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PageFlags: u64 {
+        const READ =    0b000010;
+        const WRITE =   0b000100;
+        const EXECUTE = 0b001000;
+        const USER =    0b010000;
+        const GLOBAL =  0b100000;
+    }
+}
+
 bitfield::bitfield!{
     #[derive(Copy, Clone)]
     #[repr(transparent)]
     pub struct PageEntry(u64);
     impl Debug;
     u64;
-    get_valid, set_valid: 0;
+    pub get_valid, set_valid: 0;
     get_read, set_read: 1;
     get_write, set_write: 2;
     get_exec, set_exec: 3;

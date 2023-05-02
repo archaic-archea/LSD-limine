@@ -12,8 +12,9 @@ log = "0.4.17"
 spin = "0.9"
 fdt = "0.1.5"
 bitfield = "0.14.0"
+bitflags = "2.2.1"
 sbi = "0.2.0"
-vmem = { git = "https://github.com/xvanc/vmem.git" }
+vmem = { git = "https://github.com/archaic-archea/vmem.git" }
 sifive-plic = { git = "https://github.com/archaic-archea/sifive-plic" }
 
 [dependencies.limine]

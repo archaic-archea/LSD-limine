@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
             build_kernel()?;
 
             let debug_log: &[&str] = match debug {
-                true => &["-d", "int", "-D", "debug.log"],
+                true => &["-d", "int,guest_errors,trace:virtio_rng_guest_not_ready,trace:virtio_rng_cpu_is_stopped,trace:virtio_rng_popped,trace:virtio_rng_pushed,trace:virtio_rng_request,trace:virtio_rng_vm_state_change"],
                 false => &[],
             };
 
@@ -41,16 +41,16 @@ fn main() -> anyhow::Result<()> {
                 qemu-system-riscv64
                     -machine virt
                     -cpu rv64
-                    -smp 3
+                    -smp 1
                     -m 512M
                     -bios opensbi-riscv64-generic-fw_jump.bin
                     -kernel config/spark-riscv-sbi-release.bin
                     -global virtio-mmio.force-legacy=false
-                    -device virtio-gpu-device
+                    -device virtio-rng-device
+                    -device virtio-keyboard-device
                     -device nvme,serial=deadbeff,drive=disk1
                     -drive id=disk1,format=raw,if=none,file=fat:rw:./root
                     -serial mon:stdio
-                    -nographic
                     {debug_log...}
             ").run()?;
         }

@@ -50,6 +50,7 @@ impl FreeList {
         }
     }
 
+    /// Initializes a pmm
     /// # Safety
     /// Only call once when initializing the free list
     pub unsafe fn init(&mut self, new: *mut u8) {
@@ -69,8 +70,8 @@ impl FreeList {
         let new = new as *mut FreeListEntry;
 
         // Check that the new entry isn't in page 0, and is aligned
-        if (new as usize) < 0x1000 {
-            panic!("Attempt attempt to push entry in page 0");
+        if (new as u64) < super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed) {
+            panic!("Attempt to push entry below HHDM");
         } else if !new.is_aligned() {
             panic!("Bad alignment for entry");
         }
@@ -94,8 +95,8 @@ impl FreeList {
         let new = new as *mut FreeListEntry;
 
         // Check that the new entry isn't in page 0, and is aligned
-        if (new as usize) < 0x1000 {
-            panic!("Attempt attempt to push entry in page 0");
+        if (new as u64) < super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed) {
+            panic!("Attempt to pull entry below HHDM");
         } else if !new.is_aligned() {
             panic!("Bad alignment for entry");
         }
@@ -115,13 +116,22 @@ impl FreeList {
     pub fn claim(&mut self) -> *mut u8 {
         // Temporarily store original head and next entry pointer
         let og_head = self.head;
-        let next_entry = unsafe {(*og_head).next};
+        let mut next_entry = unsafe {(*og_head).next};
+
+        // FIXME: For some reason we end up finding an invalid entry somewhere, and we make this assumption, please fix
+        if (next_entry as u64) < super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed) {
+            unsafe {
+                (*og_head).next = og_head.add(1);
+                next_entry = (*og_head).next;
+            }
+        }
 
         // Set next entry's `prev` field to null
         unsafe {(*next_entry).prev = core::ptr::null_mut()};
         
         // Reassign head to the free entry
         self.head = next_entry;
+        self.len -= 1;
         
         og_head as *mut u8
     }
@@ -130,7 +140,6 @@ impl FreeList {
         if frames == 1 {
             return Ok(self.claim());
         }
-
         // Store the head as a current entry, as well as the base entry of this contigous section
         let mut base_entry = self.head;
         let mut current_entry = self.head;
@@ -153,6 +162,7 @@ impl FreeList {
                         (*next).prev = previous;
                     }
 
+                    self.len -= frames;
                     return Ok(base_entry as *mut u8);
                 }
             } else {
