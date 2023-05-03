@@ -49,10 +49,10 @@ pub unsafe fn init() {
                     //crate::traps::plic::INT_HANDLERS.lock()[*int] = ;
                 }
 
-                //let entropy = entropy::Entropy::init(device_ptr);
-                //entropy.request(16);
+                let entropy = entropy::Entropy::init(device_ptr);
+                entropy.request(16);
 
-                //panic!("Entropy over")
+                panic!("Entropy over")
             },
             dev_type => {
                 println!("Unsupported device type {:?}", dev_type);

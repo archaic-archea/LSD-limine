@@ -15,20 +15,23 @@ pub struct DmaRegion<T: ?Sized> {
 
 impl<T: Sized> DmaRegion<[MaybeUninit<T>]> {
     pub fn new_many(n_elements: usize) -> Self {
-        let size = core::mem::size_of::<T>() * n_elements;
-        let mut frames = size / 4096;
+        use super::vmm::PageFlags;
 
-        if (size & 0xfff) != 0 {
-            frames += 1;
-        }
+        let layout = vmem::Layout::new(core::mem::size_of::<T>() * n_elements);
+        let layout = layout.align(core::mem::align_of::<T>());
 
-        let ptr = super::pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+        let alloc = crate::HIGHER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::BestFit, 
+            true, 
+            PageFlags::READ | PageFlags::WRITE
+        ).unwrap();
 
         Self { 
-            phys: PhysicalAddress::from_ptr(ptr), 
+            phys: alloc.1.unwrap(), 
             virt: core::ptr::NonNull::new(
                 core::ptr::slice_from_raw_parts_mut(
-                    ptr as *mut core::mem::MaybeUninit<T>, 
+                    alloc.0 as *mut core::mem::MaybeUninit<T>, 
                     n_elements
                 )
             ).unwrap(),
@@ -36,26 +39,31 @@ impl<T: Sized> DmaRegion<[MaybeUninit<T>]> {
     }
 
     pub unsafe fn zeroed_many(n_elements: usize) -> Self {
-        let size = core::mem::size_of::<T>() * n_elements;
-        let mut frames = size / 4096;
+        use super::vmm::PageFlags;
 
-        if (size & 0xfff) != 0 {
-            frames += 1;
-        }
+        let layout = vmem::Layout::new(core::mem::size_of::<T>() * n_elements);
+        let layout = layout.align(core::mem::align_of::<T>());
 
-        let ptr = super::pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+        let alloc = crate::HIGHER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::BestFit, 
+            true, 
+            PageFlags::READ | PageFlags::WRITE
+        ).unwrap();
 
         for i in 0..(core::mem::size_of::<T>() * n_elements) {
+            let ptr = alloc.0 as *mut u8;
+
             unsafe {
                 *ptr.add(i) = 0;
             }
         }
 
         Self { 
-            phys: PhysicalAddress::from_ptr(ptr), 
+            phys: alloc.1.unwrap(), 
             virt: core::ptr::NonNull::new(
                 core::ptr::slice_from_raw_parts_mut(
-                    ptr as *mut core::mem::MaybeUninit<T>, 
+                    alloc.0 as *mut core::mem::MaybeUninit<T>, 
                     n_elements
                 )
             ).unwrap(),
@@ -87,25 +95,30 @@ impl<T: Sized> DmaRegion<[T]> {
 
 impl<T: ?Sized> DmaRegion<T> {
     pub unsafe fn new_raw(metadata: <T as Pointee>::Metadata, zero: bool) -> Self {
+        use super::vmm::PageFlags;
         let size = core::mem::size_of_val_raw::<T>(core::ptr::from_raw_parts(core::ptr::null(), metadata));
-        let mut frames = size / 4096;
 
-        if (size & 0xfff) != 0 {
-            frames += 1;
-        }
+        let layout = vmem::Layout::new(size);
 
-        let ptr = super::pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+        let alloc = crate::HIGHER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::BestFit, 
+            true, 
+            PageFlags::READ | PageFlags::WRITE
+        ).unwrap();
 
         if zero {
+            let ptr = alloc.0 as *mut u8;
+            
             for i in 0..size {
                 *ptr.add(i) = 0;
             }
         }
 
         Self { 
-            phys: PhysicalAddress::from_ptr(ptr), 
+            phys: alloc.1.unwrap(), 
             virt: core::ptr::NonNull::new(
-                core::ptr::from_raw_parts_mut(ptr as *mut (), metadata)
+                core::ptr::from_raw_parts_mut(alloc.0 as *mut (), metadata)
             ).unwrap(),
         }
     }

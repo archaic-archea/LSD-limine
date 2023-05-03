@@ -300,7 +300,7 @@ pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize
         Trap::SupervisorTimerInterrupt => {
             println!("Cause: {:?}", trap);
 
-            crate::timing::Unit::Seconds(8).wait().unwrap();
+            crate::timing::Unit::Decaseconds(1).set().unwrap();
 
             return;
         },
