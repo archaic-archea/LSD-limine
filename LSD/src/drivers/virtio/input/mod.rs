@@ -114,9 +114,9 @@ impl Input {
         new_self
     }
 
-    pub fn command(&mut self, cmd_select: structs::InputConfigSelect, subsel: u8) {
+    pub fn command(&mut self, select: structs::InputConfigSelect, subsel: u8) {
         let command = structs::InputConfig {
-            select: cmd_select,
+            select,
             subsel,
             size: 0,
             _reserved: [0; 5],
