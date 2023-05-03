@@ -14,6 +14,7 @@ pub enum Unit {
     Centiseconds(u64),
     MilliSeconds(u64),
     MicroSeconds(u64),
+    Ticks(u64),
 }
 
 impl Unit {
@@ -31,7 +32,8 @@ impl Unit {
             Unit::Deciseconds(dis) =>   {timer_speed * dis / 10},
             Unit::Centiseconds(cs) =>   {timer_speed * cs / 100},
             Unit::MilliSeconds(ms) =>   {timer_speed * ms / 1000},
-            Unit::MicroSeconds(us) =>   {timer_speed * us / 1000000}
+            Unit::MicroSeconds(us) =>   {timer_speed * us / 1000000},
+            Unit::Ticks(ticks) =>       {*ticks},
         }
     }
 
