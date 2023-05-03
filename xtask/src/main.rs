@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
             build_kernel()?;
 
             let debug_log: &[&str] = match debug {
-                true => &["-d", "int,guest_errors,trace:virtio_rng_guest_not_ready,trace:virtio_rng_cpu_is_stopped,trace:virtio_rng_popped,trace:virtio_rng_pushed,trace:virtio_rng_request,trace:virtio_rng_vm_state_change"],
+                true => &["-d", "int,guest_errors,trace:virtio_rng_guest_not_ready,trace:virtio_rng_cpu_is_stopped,trace:virtio_rng_popped,trace:virtio_rng_pushed,trace:virtio_rng_request,trace:virtio_rng_vm_state_change", "-D", "debug.log"],
                 false => &[],
             };
 

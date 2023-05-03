@@ -293,7 +293,7 @@ pub unsafe fn init() {
         ) >> 12
     );
 
-    new_satp.set_mode(PageType::Sv48 as u64);
+    new_satp.set_mode(mmu_type as u64);
 
     unsafe {
         new_satp.set();
@@ -308,11 +308,21 @@ pub unsafe fn init() {
 /// Only run on an unloaded table
 pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
     for index in range {
-        let src_entry = (src as *mut PageEntry).add(index);
+        let src_entry = (src as *const PageEntry).add(index);
         let dest_entry = (dest as *mut PageEntry).add(index);
 
-        if (*src_entry).get_valid() {
+        if (*src_entry).is_branch() {
             *dest_entry = *src_entry;
+
+            let new_table_alloc = pmm::REGION_LIST.lock().claim() as *mut PageTable;
+            let new_phys = (new_table_alloc as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed);
+
+            (*dest_entry).set_ppn(new_phys >> 12);
+
+            let old_table = (*src_entry).table();
+
+            clone_table_range(old_table, new_table_alloc, 0..512);
+        } else if (*src_entry).is_leaf() {
             *dest_entry = *src_entry;
         } else {
             *dest_entry = PageEntry(0);
