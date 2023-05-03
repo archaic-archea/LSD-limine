@@ -49,10 +49,10 @@ pub unsafe fn init() {
                     //crate::traps::plic::INT_HANDLERS.lock()[*int] = ;
                 }
 
-                let entropy = entropy::Entropy::init(device_ptr);
-                entropy.request(16);
+                //let entropy = entropy::Entropy::init(device_ptr);
+                //entropy.request(16);
 
-                panic!("Entropy over");
+                //panic!("Entropy over")
             },
             dev_type => {
                 println!("Unsupported device type {:?}", dev_type);
@@ -80,8 +80,8 @@ pub struct VirtIOHeader {
     _reserved2: [u32; 2], // 0x28
 
     pub queue_sel: Volatile<u32, Write>, // 0x30
-    pub queue_num_max: Volatile<u32, Read>, // 0x34
-    pub queue_num: Volatile<u32, Write>, // 0x38
+    pub queue_size_max: Volatile<u32, Read>, // 0x34
+    pub queue_size: Volatile<u32, Write>, // 0x38
     _reserved3: [u32; 2], // 0x3C
     pub queue_ready: QueueReady, // 0x44
     _reserved4: [u32; 2], // 0x48

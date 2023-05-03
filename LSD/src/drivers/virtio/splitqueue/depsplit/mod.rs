@@ -1,5 +1,7 @@
 /// Splitqueue code is heavily based off repnop's code in vanadinite, which is licensed under MPL-2.0
 /// For more info visit the repository `https://github.com/repnop/vanadinite`
+/// 
+/// Here in case of emergency, not included in file structure, please use `splitequeue/mod.rs` instead
 
 use alloc::collections::VecDeque;
 

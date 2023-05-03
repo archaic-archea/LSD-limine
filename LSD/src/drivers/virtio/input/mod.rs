@@ -94,6 +94,7 @@ impl Input {
         (*new_self.header).queue_desc.set(new_self.eventqueue.descriptors.physical_address());
         (*new_self.header).queue_avail.set(new_self.eventqueue.available.physical_address());
         (*new_self.header).queue_used.set(new_self.eventqueue.used.physical_address());
+        (*new_self.header).queue_size.write(new_self.eventqueue.queue_size());
         (*new_self.header).queue_ready.ready();
 
 
@@ -101,6 +102,7 @@ impl Input {
         (*new_self.header).queue_desc.set(new_self.statusqueue.descriptors.physical_address());
         (*new_self.header).queue_avail.set(new_self.statusqueue.available.physical_address());
         (*new_self.header).queue_used.set(new_self.statusqueue.used.physical_address());
+        (*new_self.header).queue_size.write(new_self.statusqueue.queue_size());
         (*new_self.header).queue_ready.ready();
 
         (*new_self.header).status.set_flag(StatusFlag::DriverOk);
@@ -153,11 +155,26 @@ pub fn handle_int(_id: usize) {
         println!("Input int");
         let status = (*input.header).int_status.read();
 
-        let index = input.statusqueue.alloc_descriptor().unwrap();
-        let desc = input.statusqueue.descriptors.read(index);
+        let index = input.statusqueue.used.pop();
+
+        let desc = match index {
+            Some(index) => {
+                let index = super::splitqueue::SplitqueueIndex::new(index.start_index as u16);
+
+                input.statusqueue.descriptors.read(index)
+            },
+            None => {
+                let index = input.eventqueue.used.pop().unwrap_or_else(|| {panic!("No used entry")});
+                let index = super::splitqueue::SplitqueueIndex::new(index.start_index as u16);
+
+                input.eventqueue.descriptors.read(index)
+            }
+        };
 
         let base = desc.address.0 + crate::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
         let ptr = base as *mut structs::InputConfig;
+
+        println!("Handling input int on config {:?}", (*ptr).select);
 
         match (*ptr).select {
             InputConfigSelect::IDName => {

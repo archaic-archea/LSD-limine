@@ -9,7 +9,7 @@ impl Entropy {
     /// # Safety
     /// Only call once per device
     pub unsafe fn init(head: *mut super::VirtIOHeader) -> &'static mut Entropy {
-        let queue = super::splitqueue::SplitVirtqueue::new(1).unwrap();
+        let queue = super::splitqueue::SplitVirtqueue::new(8).unwrap();
 
         let new_self = Self { 
             header: head, 
@@ -33,6 +33,7 @@ impl Entropy {
         (*new_self.header).queue_avail.set(new_self.req.available.physical_address());
         (*new_self.header).queue_desc.set(new_self.req.descriptors.physical_address());
         (*new_self.header).queue_used.set(new_self.req.used.physical_address());
+        (*new_self.header).queue_size.write(new_self.req.queue_size());
         (*new_self.header).queue_ready.ready();
 
         (*new_self.header).status.set_flag(super::StatusFlag::DriverOk);
