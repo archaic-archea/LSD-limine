@@ -20,7 +20,9 @@
     pointer_is_aligned,
     layout_for_ptr,
     ptr_metadata,
-    strict_provenance
+    strict_provenance,
+    error_in_core,
+    slice_ptr_get
 )]
 
 extern crate alloc;

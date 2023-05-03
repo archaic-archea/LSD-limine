@@ -2,8 +2,6 @@ use core::sync::atomic::AtomicPtr;
 
 use crate::{println, print};
 
-use super::splitqueue;
-
 pub mod structs;
 
 pub static INPUT_DEV: AtomicPtr<Input> = AtomicPtr::new(core::ptr::null_mut());
@@ -12,9 +10,7 @@ pub static INPUT_DEV: AtomicPtr<Input> = AtomicPtr::new(core::ptr::null_mut());
 /// Only called once per input device
 pub unsafe fn init(device_ptr: *mut super::VirtIOHeader) {
     let mut device = Input::new(device_ptr, 8);
-    let virt = device.eventqueue.descriptors.queue.virt().as_ptr();
-
-    let index = splitqueue::SplitqueueIndex::new(0);
+    let index = device.eventqueue.alloc_descriptor().unwrap();
 
     device.eventqueue.available.push(index);
 
@@ -36,33 +32,32 @@ pub unsafe fn init(device_ptr: *mut super::VirtIOHeader) {
     dev_ref.command(structs::InputConfigSelect::EVBits, 0);
 
     for i in 0..8 {
-        use splitqueue::descriptor;
-        
+    
         let flag = if i != 7 {
-            descriptor::DescriptorFlags::NEXT |
-            descriptor::DescriptorFlags::WRITE
+            super::splitqueue::DescriptorFlags::NEXT |
+            super::splitqueue::DescriptorFlags::WRITE
         } else {
-            descriptor::DescriptorFlags::WRITE
+            super::splitqueue::DescriptorFlags::WRITE
         };
 
         let section = crate::memory::DmaRegion::<structs::InputEvent>::new_raw(
             (), 
             true
-        ).leak();
+        );
 
-        (*virt)[i] = descriptor::SplitDescriptor {
-            address: section.phys().0,
+        dev_ref.eventqueue.descriptors.write(index, super::splitqueue::VirtqueueDescriptor {
+            address: section.physical_address(),
             length: core::mem::size_of::<structs::InputEvent>() as u32,
             flags: flag,
-            next: (i + 1) as u16,
-        };
+            next: super::splitqueue::SplitqueueIndex::new(i + 1),
+        });
     }
 }
 
 pub struct Input {
     pub header: *mut super::VirtIOHeader,
-    pub eventqueue: super::splitqueue::SplitQueue,
-    pub statusqueue: super::splitqueue::SplitQueue,
+    pub eventqueue: super::splitqueue::SplitVirtqueue,
+    pub statusqueue: super::splitqueue::SplitVirtqueue,
 }
 
 impl Input {
@@ -71,8 +66,8 @@ impl Input {
     pub unsafe fn new(header: *mut super::VirtIOHeader, queue_size: usize) -> Self {
         use super::StatusFlag;
 
-        let event = super::splitqueue::SplitQueue::new(queue_size).unwrap();
-        let status = super::splitqueue::SplitQueue::new(queue_size).unwrap();
+        let event = super::splitqueue::SplitVirtqueue::new(queue_size).unwrap();
+        let status = super::splitqueue::SplitVirtqueue::new(queue_size).unwrap();
 
         let new_self = Self {
             header,
@@ -96,16 +91,16 @@ impl Input {
         }
 
         (*new_self.header).queue_sel.write(0);
-        (*new_self.header).queue_desc.set(new_self.eventqueue.descriptors.queue.phys());
-        (*new_self.header).queue_avail.set(new_self.eventqueue.available.queue.phys());
-        (*new_self.header).queue_used.set(new_self.eventqueue.used.queue.phys());
+        (*new_self.header).queue_desc.set(new_self.eventqueue.descriptors.physical_address());
+        (*new_self.header).queue_avail.set(new_self.eventqueue.available.physical_address());
+        (*new_self.header).queue_used.set(new_self.eventqueue.used.physical_address());
         (*new_self.header).queue_ready.ready();
 
 
         (*new_self.header).queue_sel.write(1);
-        (*new_self.header).queue_desc.set(new_self.statusqueue.descriptors.queue.phys());
-        (*new_self.header).queue_avail.set(new_self.statusqueue.available.queue.phys());
-        (*new_self.header).queue_used.set(new_self.statusqueue.used.queue.phys());
+        (*new_self.header).queue_desc.set(new_self.statusqueue.descriptors.physical_address());
+        (*new_self.header).queue_avail.set(new_self.statusqueue.available.physical_address());
+        (*new_self.header).queue_used.set(new_self.statusqueue.used.physical_address());
         (*new_self.header).queue_ready.ready();
 
         (*new_self.header).status.set_flag(StatusFlag::DriverOk);
@@ -129,17 +124,18 @@ impl Input {
         };
 
         unsafe {
-            let dma_region = crate::memory::DmaRegion::new_raw((), true).leak();
-            *dma_region.virt().as_ptr() = command;
+            let mut dma_region: crate::memory::DmaRegion<structs::InputConfig> = crate::memory::DmaRegion::new_raw((), true);
+            *dma_region = command;
 
-            let descriptor = super::splitqueue::descriptor::SplitDescriptor {
-                address: dma_region.phys().0,
+            let descriptor = super::splitqueue::VirtqueueDescriptor {
+                address: dma_region.physical_address(),
                 length: core::mem::size_of::<structs::InputConfig>() as u32,
-                flags: super::splitqueue::descriptor::DescriptorFlags::WRITE,
-                next: 0,
+                flags: super::splitqueue::DescriptorFlags::WRITE,
+                next: super::splitqueue::SplitqueueIndex::new(0),
             };
 
-            (*self.statusqueue.descriptors.queue.virt().as_ptr())[0] = descriptor;
+            let idx = self.statusqueue.alloc_descriptor().unwrap();
+            self.statusqueue.descriptors.write(idx, descriptor);
 
             self.statusqueue.available.push(super::splitqueue::SplitqueueIndex::new(0));
             (*self.header).queue_notify.notify(1);
@@ -157,10 +153,10 @@ pub fn handle_int(_id: usize) {
         println!("Input int");
         let status = (*input.header).int_status.read();
 
-        let desc = input.statusqueue.descriptors.queue.virt().as_mut();
-        let desc = &desc[0];
+        let index = input.statusqueue.alloc_descriptor().unwrap();
+        let desc = input.statusqueue.descriptors.read(index);
 
-        let base = desc.address + crate::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+        let base = desc.address.0 + crate::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
         let ptr = base as *mut structs::InputConfig;
 
         match (*ptr).select {

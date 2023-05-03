@@ -4,7 +4,7 @@ pub struct Available {
 
 impl Available {
     pub fn push(&mut self, index: super::SplitqueueIndex<super::descriptor::SplitDescriptor>) {
-        let queue_ptr = self.queue.virt().as_ptr();
+        let queue_ptr = self.queue.vi().as_ptr();
 
         unsafe {
             let queue_index = (*queue_ptr).index;

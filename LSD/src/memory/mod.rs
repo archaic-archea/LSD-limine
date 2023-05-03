@@ -11,6 +11,9 @@ use linked_list::LinkedListAllocator;
 pub mod pmm;
 pub mod vmm;
 pub mod linked_list;
+pub mod dma;
+
+pub use dma::*;
 
 pub static HEAP: SyncUnsafeCell<[u8; 16384]> = SyncUnsafeCell::new([0; 16384]);
 
@@ -52,7 +55,7 @@ pub unsafe fn init_tls() {
 }
 
 /// Based off Repnops code, licensed under MPL-2.0
-pub struct DmaRegion<T: ?Sized> {
+/*pub struct DmaRegion<T: ?Sized> {
     size: usize,
     phys: PhysicalAddress,
     virt: core::ptr::NonNull<T>,
@@ -186,7 +189,7 @@ impl<T: ?Sized> core::ops::Drop for DmaRegion<T> {
             super::HIGHER_HALF.free_constrained(self.virt.addr().get(), core::mem::size_of_val(&self.size));
         }
     }
-}
+}*/
 
 bitfield::bitfield! {
     #[derive(Copy, Clone)]
