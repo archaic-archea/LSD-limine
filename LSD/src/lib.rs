@@ -22,7 +22,8 @@
     ptr_metadata,
     strict_provenance,
     error_in_core,
-    slice_ptr_get
+    slice_ptr_get,
+    exclusive_range_pattern
 )]
 
 extern crate alloc;
@@ -40,11 +41,13 @@ pub mod arch;
 use alloc::vec::Vec;
 pub use libs::*;
 use spin::Mutex;
-use core::sync::atomic::{self, AtomicPtr};
+use core::cell::UnsafeCell;
+use core::sync::atomic::{self, AtomicPtr, AtomicBool};
 
 static LOWER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("lower_half");
 static HIGHER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("higher_half");
 
+pub static CPU_DATA: SetOnce<CpuData> = SetOnce::new(CpuData::empty());
 pub static FDT_PTR: Mutex<usize> = Mutex::new(0);
 pub static KERN_PHYS: Mutex<usize> = Mutex::new(0);
 
@@ -91,16 +94,25 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
             
             unsafe {
                 if (*ptr).is_valid() && ((*ptr).dev_id.read() != drivers::virtio::DeviceType::Reserved) {
-                    for region in node.reg().unwrap() {
-                        println!("Found region {:?}", region);
-                    }
                     println!("Found valid VirtIO {:?} device", (*ptr).dev_id.read());
 
                     let ints: Vec<usize> = node.interrupts().unwrap().collect();
 
-                    println!("{:?}", ints);
-
                     drivers::virtio::VIRTIO_LIST.lock().push((AtomicPtr::new(ptr), ints.leak()));
+                }
+            }
+        } else if node.name.contains("rtc") {
+            println!("RTC Found {:#?}", node.name);
+
+            let reg = node.reg().unwrap().next().unwrap().starting_address.add(IO_OFFSET as usize);
+            let reg = reg as *mut drivers::goldfish_rtc::GoldfishRTC;
+
+            drivers::goldfish_rtc::RTC.set(reg);
+        } else {
+            println!("Found node {:#?}", node.name);
+            if let Some(compat) = node.compatible() {
+                for comp in compat.all() {
+                    println!("Found compatible {:#?}", comp);
                 }
             }
         }
@@ -128,7 +140,18 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
 
     println!("Vmem initialized");
 
-    drivers::virtio::init();
+    //drivers::virtio::init();
+
+    let timestamp = (**drivers::goldfish_rtc::RTC.get()).time.read();
+    println!("Raw timestamp: {}", timestamp);
+    println!("date: {:?}", drivers::goldfish_rtc::UnixTimestamp(timestamp).date());
+    timing::Unit::Seconds(20).set().unwrap();
+
+    core::arch::riscv64::wfi();
+
+    let timestamp = (**drivers::goldfish_rtc::RTC.get()).time.read();
+    println!("Raw timestamp: {}", timestamp);
+    println!("date: {:?}", drivers::goldfish_rtc::UnixTimestamp(timestamp).date());
 }
 
 pub struct IOPtr<T>(*mut T)
@@ -169,3 +192,228 @@ pub fn current_context() -> usize {
     // Assume we're on qemu
     1 + (2 * id)
 }
+
+bitflags::bitflags! {
+    pub struct CpuData: u64 {
+        /// Base isa, should always be true
+        const I =           0b1;
+
+        /// Multiplication extension
+        const M =           0b10;
+
+        /// Atomic extension
+        const A =           0b100;
+
+        /// Single precision floating point extension
+        const F =           0b1000;
+
+        /// Double precision floating point extension
+        const D =           0b10000;
+
+        /// Compressed instruction extension
+        const C =           0b100000;
+
+        /// TODO: Figure out meaning
+        const ZICBOM =      0b1000000;
+
+        /// TODO: Figure out meaning
+        const ZICBOZ =      0b10000000;
+        
+        /// Control status register extension
+        const ZICSR =       0b100000000;
+
+        /// Instruction-fetch fence extension
+        const ZIFENCEI =    0b1000000000;
+
+        /// Pause hint extension
+        const ZIHINTPAUSE = 0b10000000000;
+
+        /// TODO: Figure out meaning
+        const ZAWRS =       0b100000000000;
+
+        /// TODO: Figure out meaning
+        const ZBA =         0b1000000000000;
+
+        /// TODO: Figure out meaning
+        const ZBB =         0b10000000000000;
+
+        /// TODO: Figure out meaning
+        const ZBC =         0b100000000000000;
+
+        /// TODO: Figure out meaning
+        const ZBS =         0b1000000000000000;
+
+        /// TODO: Figure out meaning
+        const SSTC =        0b10000000000000000;
+
+        /// TODO: Figure out meaning
+        const SVADU =       0b100000000000000000;
+
+        /// Page based memory type extension
+        const SVPBMT =      0b1000000000000000000;
+        
+        /// TODO: Figure out meaning
+        const H =           0b10000000000000000000;
+    }
+}
+
+impl CpuData {
+    pub fn parse_str(string: &str) -> Self {
+        let string = string.trim_start_matches("rv64").chars().collect::<Vec<char>>();
+        let mut newself = Self::empty();
+        let mut single_char = true;
+
+        let mut character_buffer = alloc::string::String::new();
+
+        for character in string {
+            if single_char {
+                match character {
+                    'i' => newself.set(CpuData::I, true),
+                    'm' => newself.set(CpuData::M, true),
+                    'a' => newself.set(CpuData::A, true),
+                    'f' => newself.set(CpuData::F, true),
+                    'd' => newself.set(CpuData::D, true),
+                    'c' => newself.set(CpuData::C, true),
+                    'h' => newself.set(CpuData::H, true),
+                    '_' => single_char = false,
+                    unknown_char => panic!("Unrecognized extension {:#?}", unknown_char)
+                }
+            } else {
+                match character {
+                    '_' => {
+                        newself.set_from_str(&character_buffer);
+
+                        character_buffer = alloc::string::String::new();
+                    },
+                    new_character => character_buffer.push(new_character)
+                }
+            }
+        }
+
+        newself.set_from_str(&character_buffer);
+
+        newself
+    }
+
+    fn set_from_str(&mut self, string: &str) {
+        match string {
+            "zicbom" => self.set(CpuData::ZICBOM, true),
+            "zicboz" => self.set(CpuData::ZICBOZ, true),
+            "zicsr" => self.set(CpuData::ZICSR, true),
+            "zifencei" => self.set(CpuData::ZIFENCEI, true),
+            "zihintpause" => self.set(CpuData::ZIHINTPAUSE, true),
+            "zawrs" => self.set(CpuData::ZAWRS, true),
+            "zba" => self.set(CpuData::ZBA, true),
+            "zbb" => self.set(CpuData::ZBB, true),
+            "zbc" => self.set(CpuData::ZBC, true),
+            "zbs" => self.set(CpuData::ZBS, true),
+            "sstc" => self.set(CpuData::SSTC, true),
+            "svadu" => self.set(CpuData::SVADU, true),
+            "svpbmt" => self.set(CpuData::SVPBMT, true),
+            ext => panic!("Unrecognized extension {:#?}", ext)
+        }
+    }
+}
+
+impl core::fmt::Debug for CpuData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.contains(CpuData::I) {
+            writeln!(f, "\nBase extension")?;
+        } else {
+            panic!("Invalid extension set, base extension not set")
+        }
+        if self.contains(CpuData::M) {
+            writeln!(f, "Multiply extension")?;
+        }
+        if self.contains(CpuData::A) {
+            writeln!(f, "Atomic extension")?;
+        }
+        if self.contains(CpuData::C) {
+            writeln!(f, "Compressed instruction extension")?;
+        }
+        if self.contains(CpuData::F) {
+            writeln!(f, "Single precision floating point extension")?;
+        }
+        if self.contains(CpuData::H) {
+            writeln!(f, "Unknown extension: 'H'")?;
+        }
+        if self.contains(CpuData::D) {
+            writeln!(f, "Double precision floating point extension")?;
+        }
+        if self.contains(CpuData::SSTC) {
+            writeln!(f, "Unknown extension: 'SSTC'")?;
+        }
+        if self.contains(CpuData::ZAWRS) {
+            writeln!(f, "Unknown extension: 'ZAWRS'")?;
+        }
+        if self.contains(CpuData::ZBA) {
+            writeln!(f, "Unknown extension: 'ZBA'")?;
+        }
+        if self.contains(CpuData::ZBB) {
+            writeln!(f, "Unknown extension: 'ZBB'")?;
+        }
+        if self.contains(CpuData::ZBC) {
+            writeln!(f, "Unknown extension: 'ZBC'")?;
+        }
+        if self.contains(CpuData::ZBS) {
+            writeln!(f, "Unknown extension: 'ZBS'")?;
+        }
+        if self.contains(CpuData::ZICBOM) {
+            writeln!(f, "Unknown extension: 'ZICBOM'")?;
+        }
+        if self.contains(CpuData::ZICBOZ) {
+            writeln!(f, "Unknown extension: 'ZICBOZ'")?;
+        }
+        if self.contains(CpuData::ZICSR) {
+            writeln!(f, "Control status register extension")?;
+        }
+        if self.contains(CpuData::ZIFENCEI) {
+            writeln!(f, "Instruction-fetch fence extension")?;
+        }
+        if self.contains(CpuData::ZIHINTPAUSE) {
+            writeln!(f, "Pause hint extension")?;
+        }
+        if self.contains(CpuData::SVADU) {
+            writeln!(f, "Unknown extension: 'SVADU'")?;
+        }
+        if self.contains(CpuData::SVPBMT) {
+            writeln!(f, "Page based memory type extension")?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct SetOnce<T: ?Sized> {
+    set: AtomicBool,
+    val: UnsafeCell<T>,
+}
+
+impl<T> SetOnce<T> {
+    pub const fn new(base_val: T) -> Self {
+        Self {
+            set: AtomicBool::new(false),
+            val: UnsafeCell::new(base_val),
+        }
+    }
+
+    pub fn set(&self, new_val: T) {
+        if self.set.load(Ordering::Relaxed) {
+            panic!("Attempted to write to a setonce cell");
+        }
+
+        self.set.store(true, Ordering::Relaxed);
+        unsafe {
+            *self.val.get() = new_val;
+        }
+    }
+
+    pub fn get(&self) -> &T {
+        unsafe {
+            &*self.val.get()
+        }
+    }
+}
+
+unsafe impl<T> Send for SetOnce<T> {}
+unsafe impl<T> Sync for SetOnce<T> {}

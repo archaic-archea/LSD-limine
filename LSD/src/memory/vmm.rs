@@ -220,6 +220,11 @@ pub unsafe fn init() {
     let fdt = unsafe {fdt::Fdt::from_ptr(fdt_ptr).expect("Invalid FDT ptr")};
     let node = fdt.find_node("/cpus/cpu@0").unwrap();
     let mmu_type = node.property("mmu-type").unwrap().as_str().unwrap();
+    let isa = node.property("riscv,isa").unwrap();
+    let extensions = crate::CpuData::parse_str(isa.as_str().unwrap());
+    println!("\nExtensions: {:#?}", extensions);
+
+    crate::CPU_DATA.set(extensions);
 
     let mmu_type = match mmu_type {
         "riscv,sv39" => {
@@ -267,9 +272,18 @@ pub unsafe fn init() {
         
         println!("{:?} 0x{:x} -> 0x{:x}", level, virt.0, phys.0);
 
-        let io_flags = PageFlags::GLOBAL | PageFlags::READ | PageFlags::WRITE;
+        let io_flags = if crate::CPU_DATA.get().contains(crate::CpuData::SVPBMT) {
+            PageFlags::GLOBAL | PageFlags::READ | PageFlags::WRITE | PageFlags::IO
+        } else {
+            PageFlags::GLOBAL | PageFlags::READ | PageFlags::WRITE
+        };
 
         unsafe {
+            Ordering::Relaxed;
+            Ordering::Acquire;
+            Ordering::Release;
+            Ordering::AcqRel;
+            Ordering::SeqCst;
             map(
                 root_table_claim, 
                 virt, 
@@ -585,6 +599,9 @@ bitflags::bitflags! {
         const EXECUTE = 0b001000;
         const USER =    0b010000;
         const GLOBAL =  0b100000;
+
+        const NC = 0b01 << 61;
+        const IO = 0b10 << 61;
     }
 }
 

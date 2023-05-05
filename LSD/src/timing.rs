@@ -42,6 +42,9 @@ pub enum Unit {
     /// .000001 seconds
     MicroSeconds(u64),
 
+    /// .000000001 seconds
+    //NanoSeconds(u64),
+
     /// 1 tick on the hardware timer
     Ticks(u64),
 }
