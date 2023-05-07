@@ -54,143 +54,6 @@ pub unsafe fn init_tls() {
     );
 }
 
-/// Based off Repnops code, licensed under MPL-2.0
-/*pub struct DmaRegion<T: ?Sized> {
-    size: usize,
-    phys: PhysicalAddress,
-    virt: core::ptr::NonNull<T>,
-}
-
-impl<T: ?Sized> DmaRegion<T> {
-    pub fn phys(&self) -> PhysicalAddress {
-        self.phys
-    }
-
-    pub fn virt(&self) -> core::ptr::NonNull<T> {
-        self.virt
-    }
-
-    pub fn leak(self) -> &'static mut Self {
-        let boxed = alloc::boxed::Box::new(self);
-
-        alloc::boxed::Box::leak(boxed)
-    }
-}
-
-impl<T: Sized> DmaRegion<[core::mem::MaybeUninit<T>]> {
-    pub fn new_many(amount: usize) -> Self {
-        use vmm::PageFlags;
-
-        let layout = vmem::Layout::new(core::mem::size_of::<T>() * amount);
-        let layout = layout.align(core::mem::align_of::<T>());
-
-        let alloc = super::HIGHER_HALF.alloc_constrained(
-            layout, 
-            vmem::AllocStrategy::BestFit, 
-            true, 
-            PageFlags::READ | PageFlags::WRITE
-        ).unwrap();
-
-        Self { 
-            size: core::mem::size_of::<T>() * amount,
-            phys: alloc.1.unwrap(), 
-            virt: core::ptr::NonNull::new(
-                core::ptr::slice_from_raw_parts_mut(
-                    alloc.0 as *mut core::mem::MaybeUninit<T>, 
-                    amount
-                )
-            ).unwrap(),
-        }
-    }
-
-    pub fn zeroed_many(amount: usize) -> Self {
-        use vmm::PageFlags;
-
-        let layout = vmem::Layout::new(core::mem::size_of::<T>() * amount);
-        let layout = layout.align(core::mem::align_of::<T>());
-
-        let alloc = super::HIGHER_HALF.alloc_constrained(
-            layout, 
-            vmem::AllocStrategy::BestFit, 
-            true, 
-            PageFlags::READ | PageFlags::WRITE
-        ).unwrap();
-
-        for i in 0..(core::mem::size_of::<T>() * amount) {
-            let ptr = alloc.0 as *mut u8;
-
-            unsafe {
-                *ptr.add(i) = 0;
-            }
-        }
-
-        Self { 
-            size: core::mem::size_of::<T>() * amount,
-            phys: alloc.1.unwrap(), 
-            virt: core::ptr::NonNull::new(
-                core::ptr::slice_from_raw_parts_mut(
-                    alloc.0 as *mut core::mem::MaybeUninit<T>, 
-                    amount
-                )
-            ).unwrap(),
-        }
-    }
-
-    /// # Safety
-    /// Only use if you immediately initialize it, or already initialized it somehow
-    pub unsafe fn assume_init(self) -> DmaRegion<[T]> {
-        let phys = self.phys;
-        let virt = self.virt;
-        let size = self.size;
-        core::mem::forget(self);
-
-        DmaRegion { size, phys, virt: core::ptr::NonNull::slice_from_raw_parts(virt.cast(), virt.len()) }
-    }
-}
-
-impl<T: ?Sized> DmaRegion<T> {
-    /// # Safety
-    /// Uhhhhhhhhh
-    pub unsafe fn new_raw(metadata: <T as core::ptr::Pointee>::Metadata, zero: bool) -> Self {
-        use vmm::PageFlags;
-        let size = core::mem::size_of_val_raw::<T>(core::ptr::from_raw_parts(core::ptr::null(), metadata));
-
-        let layout = vmem::Layout::new(size);
-
-        let alloc = super::HIGHER_HALF.alloc_constrained(
-            layout, 
-            vmem::AllocStrategy::BestFit, 
-            true, 
-            PageFlags::READ | PageFlags::WRITE
-        ).unwrap();
-
-        if zero {
-            let ptr = alloc.0 as *mut u8;
-            
-            for i in 0..size {
-                *ptr.add(i) = 0;
-            }
-        }
-
-        Self { 
-            size,
-            phys: alloc.1.unwrap(), 
-            virt: core::ptr::NonNull::new(
-                core::ptr::from_raw_parts_mut(alloc.0 as *mut (), metadata)
-            ).unwrap(),
-        }
-    }
-}
-
-impl<T: ?Sized> core::ops::Drop for DmaRegion<T> {
-    fn drop(&mut self) {
-        unsafe {
-            panic!("Dropping value");
-            super::HIGHER_HALF.free_constrained(self.virt.addr().get(), core::mem::size_of_val(&self.size));
-        }
-    }
-}*/
-
 bitfield::bitfield! {
     #[derive(Copy, Clone)]
     #[repr(transparent)]
@@ -342,4 +205,26 @@ impl<A> Locked<A> {
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
+}
+
+// Code taken from Spark, intellectual property of Xvanc and Spark developers, more information can be found at https://github.com/bolt-os/spark
+#[macro_export]
+macro_rules! size_of {
+    ($t:ty) => {
+        ::core::mem::size_of::<$t>()
+    };
+}
+
+#[macro_export]
+macro_rules! pages_for {
+    ($size:expr) => {
+        ($size as usize + $crate::memory::vmm::PAGE_SIZE - 1) / $crate::memory::vmm::PAGE_SIZE
+    };
+    ($size:expr, $page_size:expr) => {{
+        let page_size = $page_size;
+        ($size as usize + (page_size - 1)) / page_size
+    }};
+    (type $t:ty $(, $page_size:expr)?) => {
+        pages_for!(::core::mem::size_of::<$t>() $(, $page_size)?)
+    };
 }

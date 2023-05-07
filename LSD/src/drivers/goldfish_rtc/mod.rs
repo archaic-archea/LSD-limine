@@ -1,4 +1,4 @@
-use crate::{volatile::{Volatile, Read, Write}, println};
+use crate::volatile::{Volatile, Read, Write};
 
 pub static RTC: crate::SetOnce<*mut GoldfishRTC> = crate::SetOnce::new(core::ptr::null_mut());
 
@@ -111,23 +111,6 @@ enum Month {
 }
 
 impl Month {
-    pub fn from_usize(val: usize) -> Self {
-        match val {
-            0 => Self::January,
-            1 => Self::Febuary,
-            2 => Self::March,
-            3 => Self::April,
-            4 => Self::May,
-            5 => Self::June,
-            6 => Self::July,
-            7 => Self::August,
-            8 => Self::September,
-            9 => Self::October,
-            10 => Self::November,
-            _ => Self::December
-        }
-    }
-
     pub fn offset(&self, is_leap: bool) -> usize {
         let leap_offset = if is_leap {
             1

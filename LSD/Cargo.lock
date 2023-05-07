@@ -39,6 +39,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "784a4df722dc6267a04af36895398f59d21d07dce47232adf31ec0ff2fa45e67"
 
 [[package]]
+name = "libsa"
+version = "0.1.0"
+source = "git+https://github.com/bolt-os/libsa#b5f0a9af7e6cd1426418b7e5f9678f97b3e00fd3"
+
+[[package]]
 name = "limine"
 version = "0.1.0"
 source = "git+https://github.com/bolt-os/limine-rs?rev=658a9d9#658a9d9eb94ad00485e27760f55cbc8355372169"
@@ -72,6 +77,7 @@ dependencies = [
  "bitfield",
  "bitflags 2.2.1",
  "fdt",
+ "libsa",
  "limine",
  "log",
  "sbi",

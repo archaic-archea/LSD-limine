@@ -136,6 +136,7 @@ impl FreeList {
         og_head as *mut u8
     }
 
+    /// Guaranteed to return a physically continuous section of memory
     pub fn claim_continuous(&mut self, frames: usize) -> Result<*mut u8, alloc::string::String> {
         if frames == 1 {
             return Ok(self.claim());

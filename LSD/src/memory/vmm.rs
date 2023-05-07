@@ -13,6 +13,9 @@ use crate::println;
 
 use super::{VirtualAddress, PhysicalAddress, pmm};
 
+pub const PAGE_SHIFT: u32 = 12;
+pub const PAGE_SIZE: usize = 0x1000;
+
 pub static LEVELS: AtomicU8 = AtomicU8::new(0);
 
 pub struct Vmm <'a, 'b>(pub vmem::Vmem<'a, 'b>);
@@ -30,14 +33,16 @@ impl<'a, 'b> Vmm <'a, 'b> {
         let section_data = section;
         return_val.0 = section_data;
 
+        let mut claim: Result<*mut u8, alloc::string::String>;
+        let mut claim_phys = PhysicalAddress(0);
+        
         let mut frames = size / 4096;
-
         if (size % 4096) != 0 {
             frames += 1;
         }
 
-        let mut claim: Result<*mut u8, alloc::string::String>;
-        let mut claim_phys = PhysicalAddress(0);
+        let size = frames * 4096;
+
 
         if physically_contiguous {
             claim = pmm::REGION_LIST.lock().claim_continuous(frames);
@@ -279,11 +284,6 @@ pub unsafe fn init() {
         };
 
         unsafe {
-            Ordering::Relaxed;
-            Ordering::Acquire;
-            Ordering::Release;
-            Ordering::AcqRel;
-            Ordering::SeqCst;
             map(
                 root_table_claim, 
                 virt, 

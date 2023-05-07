@@ -15,6 +15,7 @@ bitfield = "0.14.0"
 bitflags = "2.2.1"
 sbi = "0.2.0"
 vmem = { git = "https://github.com/archaic-archea/vmem.git" }
+libsa = { git = "https://github.com/bolt-os/libsa" }
 sifive-plic = { git = "https://github.com/archaic-archea/sifive-plic" }
 
 [dependencies.limine]

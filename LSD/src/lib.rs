@@ -77,6 +77,9 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
     }
 
     let fdt = unsafe {fdt::Fdt::from_ptr(dtb).unwrap()};
+    let fdt = alloc::boxed::Box::new(fdt);
+    let fdt = alloc::boxed::Box::leak(fdt);
+
     for node in fdt.all_nodes() {
         if node.name.contains("plic") {
             let ptr = node.reg().unwrap().next().unwrap().starting_address as usize;
@@ -85,7 +88,7 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
             traps::plic::PLIC_ADDR.store(ptr as *mut sifive_plic::Plic, Ordering::Relaxed);
         } else if node.name == "cpus" {
             let tps = node.property("timebase-frequency").unwrap().as_usize().unwrap();
-            println!("Clock runs at {}hz", tps);
+            println!("\nClock runs at {}hz", tps);
 
             timing::TIMER_SPEED.store(tps as u64, Ordering::Relaxed);
         } else if node.name.contains("virtio") {
@@ -94,7 +97,7 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
             
             unsafe {
                 if (*ptr).is_valid() && ((*ptr).dev_id.read() != drivers::virtio::DeviceType::Reserved) {
-                    println!("Found valid VirtIO {:?} device", (*ptr).dev_id.read());
+                    println!("\nFound valid VirtIO {:?} device", (*ptr).dev_id.read());
 
                     let ints: Vec<usize> = node.interrupts().unwrap().collect();
 
@@ -102,19 +105,49 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
                 }
             }
         } else if node.name.contains("rtc") {
-            println!("RTC Found {:#?}", node.name);
+            println!("\nRTC Found {:#?}", node.name);
 
             let reg = node.reg().unwrap().next().unwrap().starting_address.add(IO_OFFSET as usize);
             let reg = reg as *mut drivers::goldfish_rtc::GoldfishRTC;
 
             drivers::goldfish_rtc::RTC.set(reg);
-        } else {
-            println!("Found node {:#?}", node.name);
-            if let Some(compat) = node.compatible() {
-                for comp in compat.all() {
-                    println!("Found compatible {:#?}", comp);
-                }
-            }
+        } else if node.name.contains("pci") {
+            println!("\nPCI host found");
+            /*assert!(node.property("device_type").unwrap().as_str() == Some("pci"), "Not PCI bus");
+
+            let bus_range = node.property("bus-range").unwrap();
+
+            let ecam = node.reg().unwrap().next().unwrap();
+
+            let bus_range = bus_range.value;
+            let bus_start = u32::from_be_bytes(
+                [
+                    bus_range[0],
+                    bus_range[1],
+                    bus_range[2],
+                    bus_range[3],
+                ]
+            ) as u8;
+            let bus_end = u32::from_be_bytes(
+                [
+                    bus_range[4],
+                    bus_range[5],
+                    bus_range[6],
+                    bus_range[7],
+                ]
+            ) as u8;
+
+            let pci_host = drivers::pci::PCIHost {
+                interrupt_map_mask: 0,
+                interrupt_map: 0,
+                ecam_region: drivers::pci::EcamRegion {
+                    start: ecam.starting_address.add(IO_OFFSET as usize) as *mut u8,
+                    size: ecam.size.unwrap()
+                },
+                bus_range: bus_start..=bus_end,
+            };
+
+            drivers::pci::PCI_HOST.set(pci_host);*/
         }
     }
 
@@ -140,7 +173,8 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
 
     println!("Vmem initialized");
 
-    //drivers::virtio::init();
+    drivers::virtio::init();
+    //drivers::pci::init();
 
     let timestamp = (**drivers::goldfish_rtc::RTC.get()).time.read();
     println!("Raw timestamp: {}", timestamp);

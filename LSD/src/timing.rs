@@ -1,7 +1,8 @@
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::{sync::atomic::{AtomicU64, Ordering}, arch::asm, time::Duration};
 
 pub static TIMER_SPEED: AtomicU64 = AtomicU64::new(u64::MAX);
 
+#[derive(Debug)]
 pub enum Unit {
     /// 604800 seconds
     /// 10080 minutes
@@ -75,5 +76,74 @@ impl Unit {
         sbi::timer::set_timer(ticks + time)?;
 
         Ok(())
+    }
+}
+
+fn get_monotonic_count() -> u64 {
+    let count: u64;
+
+    unsafe {
+        asm!("rdtime {}", out(reg) count, options(nomem, nostack, preserves_flags));
+    }
+
+    count
+}
+
+const MICROS_PER_SECOND: u64 = 1000000;
+
+fn timebase_frequency() -> u64 {
+    TIMER_SPEED.load(Ordering::Relaxed)
+}
+
+#[derive(Clone, Copy)]
+pub struct Instant(u64);
+
+impl Instant {
+    pub fn now() -> Instant {
+        Self(get_monotonic_count())
+    }
+
+    pub fn duration_since(self, earlier: Instant) -> Duration {
+        self.checked_duration_since(earlier).unwrap_or_default()
+    }
+
+    pub fn checked_duration_since(self, earlier: Instant) -> Option<Duration> {
+        let freq = timebase_frequency();
+        let ticks_per_micro = (freq + MICROS_PER_SECOND - 1) / MICROS_PER_SECOND;
+
+        let diff = self.0.checked_sub(earlier.0)?;
+
+        let secs = diff / freq;
+        let rems = diff % freq;
+        let nanos = (rems / ticks_per_micro) * 1000;
+
+        Some(Duration::new(secs, nanos as u32))
+    }
+}
+
+impl core::ops::Sub for Instant {
+    type Output = Duration;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.duration_since(rhs)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Timeout {
+    start: Instant,
+    duration: Duration,
+}
+
+impl Timeout {
+    pub fn start(duration: Duration) -> Timeout {
+        Timeout {
+            start: Instant::now(),
+            duration,
+        }
+    }
+
+    pub fn expired(&self) -> bool {
+        Instant::now() - self.start >= self.duration
     }
 }
