@@ -12,7 +12,7 @@ bitfield::bitfield! {
     pub sie, set_sie: 1; 
 
     /// Handled by machine
-    spie, set_spie: 5;
+    pub spie, set_spie: 5;
 
     /// When true, system is big endian
     pub ube, set_ube: 6;

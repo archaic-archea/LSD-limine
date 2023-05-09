@@ -23,7 +23,8 @@
     strict_provenance,
     error_in_core,
     slice_ptr_get,
-    exclusive_range_pattern
+    exclusive_range_pattern,
+    int_roundings
 )]
 
 extern crate alloc;
@@ -35,6 +36,7 @@ pub mod utils;
 pub mod traps;
 pub mod timing;
 pub mod drivers;
+pub mod userspace;
 
 pub mod arch;
 
@@ -80,13 +82,15 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
     let fdt = alloc::boxed::Box::new(fdt);
     let fdt = alloc::boxed::Box::leak(fdt);
 
-    for node in fdt.all_nodes() {
-        if node.name.contains("plic") {
-            let ptr = node.reg().unwrap().next().unwrap().starting_address as usize;
-            let ptr = ptr + hhdm_start as usize;
+    let plic = fdt.find_node("/soc/plic@c000000").unwrap();
+    let ptr = plic.reg().unwrap().next().unwrap().starting_address as usize;
+    let ptr = ptr + hhdm_start as usize;
 
-            traps::plic::PLIC_ADDR.store(ptr as *mut sifive_plic::Plic, Ordering::Relaxed);
-        } else if node.name == "cpus" {
+    traps::plic::PLIC_ADDR.store(ptr as *mut sifive_plic::Plic, Ordering::Relaxed);
+    traps::plic_init();
+
+    for node in fdt.all_nodes() {
+        if node.name == "cpus" {
             let tps = node.property("timebase-frequency").unwrap().as_usize().unwrap();
             println!("\nClock runs at {}hz", tps);
 
@@ -148,13 +152,20 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
             };
 
             drivers::pci::PCI_HOST.set(pci_host);*/
-        }
-    }
+        } else if node.name.contains("serial") {
+            println!("Found serial");
 
-    if traps::plic::PLIC_ADDR.load(Ordering::Relaxed).is_null() {
-        panic!("No plic found");
-    } else {
-        traps::plic_init();
+            for int in node.interrupts().unwrap() {
+                let plic = crate::traps::plic::PLIC_ADDR.load(core::sync::atomic::Ordering::Relaxed);
+
+                (*plic).enable_interrupt(current_context(), int);
+                (*plic).set_interrupt_priority(int, 0x2);
+
+                crate::traps::plic::INT_HANDLERS.lock()[int] = uart::uart_handler;
+            }
+            
+            uart::UART.lock().set_int();
+        }
     }
 
     LOWER_HALF.add(0x1000, (hhdm_start - 0x1001) as usize).unwrap();
@@ -173,10 +184,11 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
 
     println!("Vmem initialized");
 
-    drivers::virtio::init();
+    //drivers::virtio::init();
     //drivers::pci::init();
 
-    let timestamp = (**drivers::goldfish_rtc::RTC.get()).time.read();
+    // Test code for date code, as well as timing code
+    /*let timestamp = (**drivers::goldfish_rtc::RTC.get()).time.read();
     println!("Raw timestamp: {}", timestamp);
     println!("date: {:?}", drivers::goldfish_rtc::UnixTimestamp(timestamp).date());
     timing::Unit::Seconds(20).set().unwrap();
@@ -185,7 +197,9 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
 
     let timestamp = (**drivers::goldfish_rtc::RTC.get()).time.read();
     println!("Raw timestamp: {}", timestamp);
-    println!("date: {:?}", drivers::goldfish_rtc::UnixTimestamp(timestamp).date());
+    println!("date: {:?}", drivers::goldfish_rtc::UnixTimestamp(timestamp).date());*/
+
+    userspace::init_task_ids();
 }
 
 pub struct IOPtr<T>(*mut T)

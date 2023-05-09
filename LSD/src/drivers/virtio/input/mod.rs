@@ -9,10 +9,7 @@ pub static INPUT_DEV: AtomicPtr<Input> = AtomicPtr::new(core::ptr::null_mut());
 /// # Safety
 /// Only called once per input device
 pub unsafe fn init(device_ptr: *mut super::VirtIOHeader) {
-    let mut device = Input::new(device_ptr, 8);
-    let index = device.eventqueue.alloc_descriptor().unwrap();
-
-    device.eventqueue.available.push(index);
+    let device = Input::new(device_ptr, 8);
 
     let boxed = alloc::boxed::Box::new(device);
     let dev_ref = alloc::boxed::Box::leak(boxed);
@@ -22,16 +19,7 @@ pub unsafe fn init(device_ptr: *mut super::VirtIOHeader) {
     println!("Name command sending");
     dev_ref.command(structs::InputConfigSelect::IDName, 0);
 
-    println!("Serial command sending");
-    dev_ref.command(structs::InputConfigSelect::IDSerial, 0);
-
-    println!("Dev IDs command sending");
-    dev_ref.command(structs::InputConfigSelect::IDDevIDs, 0);
-
-    println!("EVBits command sending");
-    dev_ref.command(structs::InputConfigSelect::EVBits, 0);
-
-    for i in 0..8 {
+    /*for i in 0..8 {
     
         let flag = if i != 7 {
             super::splitqueue::DescriptorFlags::NEXT |
@@ -51,7 +39,7 @@ pub unsafe fn init(device_ptr: *mut super::VirtIOHeader) {
             flags: flag,
             next: super::splitqueue::SplitqueueIndex::new(i + 1),
         });
-    }
+    }*/
 }
 
 pub struct Input {
@@ -126,6 +114,7 @@ impl Input {
         };
 
         unsafe {
+            println!("Storing command");
             let mut dma_region: crate::memory::DmaRegion<structs::InputConfig> = crate::memory::DmaRegion::new_raw((), true);
             *dma_region = command;
 
@@ -136,10 +125,14 @@ impl Input {
                 next: super::splitqueue::SplitqueueIndex::new(0),
             };
 
+            println!("Allocating descriptor");
             let idx = self.statusqueue.alloc_descriptor().unwrap();
             self.statusqueue.descriptors.write(idx, descriptor);
 
+            println!("Storing available");
             self.statusqueue.available.push(super::splitqueue::SplitqueueIndex::new(0));
+
+            println!("Notifying");
             (*self.header).queue_notify.notify(1);
         }
     }

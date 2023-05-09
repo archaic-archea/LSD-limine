@@ -5,7 +5,7 @@
 // v. 2.0. If a copy of the MPL was not distributed with this file, You can
 // obtain one at https://mozilla.org/MPL/2.0/.
 
-#![feature(naked_functions, stdsimd)]
+#![feature(naked_functions, stdsimd, generic_arg_infer)]
 #![no_std]
 #![no_main]
 
@@ -27,6 +27,9 @@ struct CoreInit {
 
 static mut CORE_INIT: CoreInit = CoreInit {sp: 0, satp: 0, claimed: core::sync::atomic::AtomicBool::new(false)};
 
+static USER_PROG: &[u8] = include_bytes!("../../LSD-Userspace/target/riscv64gc-unknown-none-elf/release/LSD-Userspace");
+static NULL_TASK: &[u8] = include_bytes!("../../null_task/target/riscv64gc-unknown-none-elf/release/null_task");
+
 extern "C" fn kmain() -> ! {
     *lsd::FDT_PTR.lock() = FDT.response().unwrap().dtb_ptr as usize;
     *lsd::KERN_PHYS.lock() = KERN_PHYS.response().unwrap().phys;
@@ -45,7 +48,22 @@ extern "C" fn kmain() -> ! {
 
     smp_init();
 
-    lsd::println!("Kernel end, looping");
+    // Make it so we'll jump to user mode on an `sret`
+    let mut sstatus = lsd::arch::regs::Sstatus::new();
+    sstatus.set_spp(false);
+    sstatus.set_spie(true);
+    unsafe {
+        sstatus.set();
+    }
+
+    let id = lsd::userspace::load(USER_PROG);
+    println!("Loaded user program task with id 0x{id:x}");
+    let id = lsd::userspace::load(NULL_TASK);
+    println!("Loaded null task with id 0x{id:x}");
+    lsd::timing::Unit::MilliSeconds(10).set().unwrap();
+    lsd::userspace::start_tasks();
+
+    // If we get here, thats bad, very bad
 
     pause_loop()
 }
@@ -61,10 +79,10 @@ unsafe extern "C" fn _boot() -> ! {
         
         .option push
         .option norelax
-        lla sp, __stack_top
         lla gp, __global_pointer$
         .option pop
 
+        lla sp, __stack_top
         lla t0, stvec_trap_shim
         csrw stvec, t0
 

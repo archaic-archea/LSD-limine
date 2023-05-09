@@ -16,18 +16,32 @@ fn build_kernel() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn build_user() -> anyhow::Result<()> {
+    let dir = xshell::pushd("./LSD-Userspace");
+    xshell::cmd!("cargo build --release").run()?;
+    std::mem::drop(dir);
+
+    let dir = xshell::pushd("./null_task");
+    xshell::cmd!("cargo build --release").run()?;
+    std::mem::drop(dir);
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Command::from_args();
 
     match args {
         Command::Build {} => {
+            build_user()?;
             build_kernel()?;
         },
         Command::Run { debug } => {
+            build_user()?;
             build_kernel()?;
 
             let debug_log: &[&str] = match debug {
-                true => &["-d", "int,guest_errors,trace:virtio_rng_guest_not_ready,trace:virtio_rng_cpu_is_stopped,trace:virtio_rng_popped,trace:virtio_rng_pushed,trace:virtio_rng_request,trace:virtio_rng_vm_state_change,trace:virtio_set_status,trace:virtio_notify,trace:virtio_queue_notify,trace:qmp_enter_x_query_virtio_queue_element"],
+                true => &["-d", "int,guest_errors,trace:virtio_rng_guest_not_ready,trace:virtio_rng_cpu_is_stopped,trace:virtio_rng_popped,trace:virtio_rng_pushed,trace:virtio_rng_request,trace:virtio_rng_vm_state_change,trace:virtio_set_status,trace:virtio_notify,trace:virtio_queue_notify,trace:qmp_enter_x_query_virtio_queue_element", "-D", "debug.log"],
                 false => &[],
             };
 

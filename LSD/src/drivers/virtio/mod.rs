@@ -81,7 +81,7 @@ pub struct VirtIOHeader {
 
     pub queue_sel: Volatile<u32, Write>, // 0x30
     pub queue_size_max: Volatile<u32, Read>, // 0x34
-    pub queue_size: Volatile<u32, Write>, // 0x38
+    pub queue_size: QueueSize, // 0x38
     _reserved3: [u32; 2], // 0x3C
     pub queue_ready: QueueReady, // 0x44
     _reserved4: [u32; 2], // 0x48
@@ -137,11 +137,22 @@ pub enum DeviceType {
 
 #[repr(transparent)]
 #[derive(Debug)]
+pub struct QueueSize(Volatile<u32, Write>);
+
+impl QueueSize {
+    pub fn write(&self, val: u32) {
+        println!("Writing queue size {}", val);
+        self.0.write(val);
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug)]
 pub struct QueueDescriptor(Volatile<[u32; 2], ReadWrite>);
 
 impl QueueDescriptor {
     pub fn set(&self, addr: crate::memory::PhysicalAddress) {
-        println!("Loading physical descriptor address 0x{:x}", addr.0);
+        println!("Storing descriptor queue at 0x{:x}", addr.0);
         let low = (addr.0 & 0xFFFF_FFFF) as u32;
         let high = (addr.0 >> 32) as u32;
         self.0[0].write(low);
@@ -155,7 +166,7 @@ pub struct QueueAvailable(Volatile<[u32; 2], ReadWrite>);
 
 impl QueueAvailable {
     pub fn set(&self, addr: crate::memory::PhysicalAddress) {
-        println!("Loading physical available address 0x{:x}", addr.0);
+        println!("Storing available queue at 0x{:x}", addr.0);
         let low = (addr.0 & 0xFFFF_FFFF) as u32;
         let high = (addr.0 >> 32) as u32;
         self.0[0].write(low);
@@ -169,7 +180,7 @@ pub struct QueueUsed(Volatile<[u32; 2], ReadWrite>);
 
 impl QueueUsed {
     pub fn set(&self, addr: crate::memory::PhysicalAddress) {
-        println!("Loading physical used address 0x{:x}", addr.0);
+        println!("Storing used queue at 0x{:x}", addr.0);
         let low = (addr.0 & 0xFFFF_FFFF) as u32;
         let high = (addr.0 >> 32) as u32;
         self.0[0].write(low);

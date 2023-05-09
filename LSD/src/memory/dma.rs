@@ -5,6 +5,8 @@
 // v. 2.0. If a copy of the MPL was not distributed with this file, You can
 // obtain one at https://mozilla.org/MPL/2.0/.
 
+use crate::println;
+
 use super::PhysicalAddress;
 use core::{ptr::{NonNull, Pointee}, mem::MaybeUninit};
 
@@ -163,6 +165,7 @@ impl<T: ?Sized> core::ops::Deref for DmaRegion<T> {
 
 impl<T: ?Sized> core::ops::DerefMut for DmaRegion<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        println!("Writing to phys 0x{:x}", self.phys.0);
         unsafe { &mut *self.virt.as_ptr() }
     }
 }

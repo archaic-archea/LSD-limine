@@ -293,14 +293,13 @@ impl Trap {
 
 #[no_mangle]
 pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize) {
-    println!("Trap on hart 0x{:x}", crate::HART_ID.load(Ordering::Relaxed));
+    //println!("Trap on hart 0x{:x} with sepc 0x{:x}", crate::HART_ID.load(Ordering::Relaxed), regs.sepc);
     let trap = Trap::from_cause(scause);
 
     match trap {
         Trap::SupervisorTimerInterrupt => {
-            println!("Cause: {:?}", trap);
-
-            crate::timing::Unit::Decaseconds(1).set().unwrap();
+            crate::timing::Unit::MilliSeconds(1).set().unwrap();
+            task::advance_task(regs);
 
             return;
         },
@@ -316,6 +315,7 @@ pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize
                 // Forget lock so it is locked when returned to the faulting area
                 let _lock = crate::uart::UART.lock();
                 core::mem::forget(_lock);
+                return;
             } else {
                 println!("{:#x?}", regs);
     
@@ -325,6 +325,22 @@ pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize
         },
         Trap::SupervisorExternalInterrupt => {
             plic::handle_external();
+            return;
+        },
+        Trap::UserModeEnvironmentCall => {
+            regs.sepc += 4;
+            crate::arch::syscalls::syscall_core(regs);
+            return;
+        },
+        Trap::Breakpoint => {
+            let mut reader = task::CURRENT_USER_TASK.write();
+            let cur_task = reader.current_task_mut();
+            cur_task.waiting_on = task::WaitSrc::Breakpoint;
+
+            core::mem::drop(reader);
+
+            task::advance_task(regs);
+
             return;
         },
         _ => {

@@ -185,6 +185,58 @@ impl FreeList {
         // Return none if we couldnt find a contigous piece of memory large enough
         Err(alloc::format!("Couldnt find contiguous frames out of {} frames", self.len))
     }
+
+    pub fn claim_aligned(&mut self, frames: usize, align: super::vmm::PageSize) -> Result<*mut u8, alloc::string::String> {
+        if frames == 1 {
+            return Ok(self.claim());
+        }
+        // Store the head as a current entry, as well as the base entry of this contigous section
+        let mut base_entry = self.head;
+        let mut current_entry = self.head;
+        let mut contiguous_frames = 1;
+        let align_mask = (align as usize) - 1;
+
+        for _ in 0..self.len {
+            // If we found the needed amount of frames handle returning the base entry
+            // Otherwise handle getting the next entry
+            if contiguous_frames == frames {
+                unsafe {
+                    let previous = (*base_entry).prev;
+                    let next = (*current_entry).next;
+
+                    // Reassign the head if needed, otherwise stitch the previous, and next entries together
+                    if previous.is_null() {
+                        self.head = (*current_entry).next;
+                        (*next).prev = core::ptr::null_mut();
+                    } else {
+                        (*previous).next = next;
+                        (*next).prev = previous;
+                    }
+
+                    self.len -= frames;
+                    return Ok(base_entry as *mut u8);
+                }
+            } else {
+                unsafe {
+                    let masked_addr = (base_entry as usize) & align_mask;
+
+                    // If the current entry is contigous with the next entry, increment `contigous_frames` and set the current entry to the next
+                    // Otherwise reset `contigous_frames`, set the current entry to the next entry, set the base entry to the current entry
+                    if ((current_entry as usize + 0x1000) == (*current_entry).next as usize) && (masked_addr == 0) {
+                        current_entry = (*current_entry).next;
+                        contiguous_frames += 1;
+                    } else {
+                        current_entry = (*current_entry).next;
+                        base_entry = current_entry;
+                        contiguous_frames = 1;
+                    }
+                }
+            }
+        }
+
+        // Return none if we couldnt find a contigous piece of memory large enough
+        Err(alloc::format!("Couldnt find contiguous frames out of {} frames", self.len))
+    }
 }
 
 unsafe impl Send for FreeList {}

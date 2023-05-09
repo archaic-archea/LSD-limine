@@ -26,13 +26,28 @@ impl SplitVirtqueue {
 
         let freelist = (0..queue_size as u16).collect();
 
-        // FIXME: return errors
-        let descriptors =
-            DescriptorQueue { queue: unsafe { DmaRegion::zeroed_many(queue_size).assume_init() } };
-        let available = AvailableQueue { queue: unsafe { DmaRegion::new_raw(queue_size, true) } };
-        let used = UsedQueue { queue: unsafe { DmaRegion::new_raw(queue_size, true) }, last_seen: 0 };
+        let descriptors = DescriptorQueue { 
+            queue: unsafe { DmaRegion::zeroed_many(queue_size).assume_init() } 
+        };
 
-        Ok(Self { queue_size, freelist, descriptors, available, used })
+        let available = AvailableQueue { 
+            queue: unsafe { DmaRegion::new_raw(queue_size, true) } 
+        };
+
+        let used = UsedQueue { 
+            queue: unsafe { DmaRegion::new_raw(queue_size, true) }, 
+            last_seen: 0 
+        };
+
+        Ok(
+            Self { 
+                queue_size, 
+                freelist, 
+                descriptors, 
+                available, 
+                used 
+            }
+        )
     }
 
     pub fn alloc_descriptor(&mut self) -> Option<SplitqueueIndex<VirtqueueDescriptor>> {

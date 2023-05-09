@@ -21,3 +21,7 @@ sifive-plic = { git = "https://github.com/archaic-archea/sifive-plic" }
 [dependencies.limine]
 git = "https://github.com/bolt-os/limine-rs"
 rev = "658a9d9"
+
+[dependencies.elf]
+version = "0.7.2"
+default-features = false

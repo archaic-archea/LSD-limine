@@ -420,6 +420,7 @@ pub unsafe fn map(
     pmm_lock: &mut MutexGuard<super::pmm::FreeList>,
     flags: PageFlags,
 ) {
+    //println!("Mapping 0x{:x}", virt.0);
     let mut table = table;
     let mut level = level;
 
@@ -482,6 +483,19 @@ pub enum PageSize {
     Colossal = 0x1_0000_0000_0000,
 }
 
+impl PageSize {
+    pub fn from_level(level: PageLevel) -> Self {
+        match level {
+            PageLevel::Level1 => Self::Small,
+            PageLevel::Level2 => Self::Medium,
+            PageLevel::Level3 => Self::Large,
+            PageLevel::Level4 => Self::Huge,
+            PageLevel::Level5 => Self::Colossal,
+            _ => Self::None
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PageType {
     Bare = 0,
@@ -497,6 +511,15 @@ impl PageType {
             Self::Sv39 => 0xffffffc000000000,
             Self::Sv48 => 0xffff800000000000,
             Self::Sv57 => 0xff00000000000000
+        }
+    }
+
+    pub fn from_levels(levels: PageLevel) -> Self {
+        match levels {
+            PageLevel::Level3 => Self::Sv39,
+            PageLevel::Level4 => Self::Sv48,
+            PageLevel::Level5 => Self::Sv57,
+            _ => Self::Bare
         }
     }
 }
@@ -652,7 +675,9 @@ impl PageEntry {
 
 bitfield::bitfield!{
     #[repr(transparent)]
+    #[derive(Clone, Copy)]
     pub struct Satp(u64);
+    impl Debug;
     
     pub get_ppn, set_ppn: 43, 0;
     pub get_asid, set_asid: 59, 44;
@@ -685,6 +710,7 @@ impl Default for Satp {
 }
 
 pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static str> {
+    //println!("Finding physical for address 0x{:x}", virt.0);
     let mut table = current_table();
 
     let mut levels = PageLevel::from_usize(LEVELS.load(Ordering::Relaxed) as usize);
@@ -694,7 +720,7 @@ pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static st
             let entry = &(*table).0[virt.index(levels) as usize];
 
             if entry.is_leaf() {
-                let mut addr = PhysicalAddress(0);
+                let mut addr = PhysicalAddress(entry.get_ppn() << 12);
 
                 let mask: u64 = match levels {
                     PageLevel::Level1 => 0xfff,
@@ -709,9 +735,6 @@ pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static st
 
                 addr.0 &= inv_mask;
                 addr.0 |= virt.0 & mask;
-
-                println!("Mask level {levels:?}");
-                println!("mask: 0b{mask:064b}\nvirt: 0b{:064b}", virt.0);
 
                 return Ok(addr);
             } else if entry.is_branch() {
