@@ -7,16 +7,28 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::println;
+use crate::{println, current_context};
 
 pub mod plic;
 pub mod task;
+
+/// # Safety
+/// Only call once ever
+pub unsafe fn plic_init() {
+    let plic = plic::PLIC_ADDR.load(Ordering::Relaxed);
+
+    let context = current_context();
+    let contexts = context..=context;
+    (*plic).init(64, contexts);
+    (*plic).set_context_threshold(context, 0x1);
+    println!("Initialized plic");
+}
 
 pub fn init() {
     unsafe {
         let new_sscratch = alloc::alloc::alloc(alloc::alloc::Layout::new::<Sscratch>()) as *mut Sscratch;
 
-        (*new_sscratch).int_stack_top = super::memory::pmm::REGION_LIST.lock().claim_frames(0x20).unwrap().byte_add(0x20 * 0x1000);
+        (*new_sscratch).int_stack_top = super::memory::pmm::REGION_LIST.lock().claim_continuous(0x20).unwrap().byte_add(0x20 * 0x1000);
         core::arch::asm!(
             "
                 mv {stp}, tp
@@ -281,17 +293,56 @@ impl Trap {
 
 #[no_mangle]
 pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize) {
-    println!("Trap on hart 0x{:x}", crate::HART_ID.load(Ordering::Relaxed));
+    //println!("Trap on hart 0x{:x} with sepc 0x{:x}", crate::HART_ID.load(Ordering::Relaxed), regs.sepc);
     let trap = Trap::from_cause(scause);
 
     match trap {
         Trap::SupervisorTimerInterrupt => {
-            println!("Cause: {:?}", trap);
-
-            crate::timing::Unit::Seconds(8).wait().unwrap();
+            crate::timing::Unit::MilliSeconds(1).set().unwrap();
+            task::advance_task(regs);
 
             return;
-        }
+        },
+        Trap::StorePageFault => {
+            if stval == 0xffffffff90000000 {
+                unsafe {
+                    crate::uart::UART.force_unlock();
+
+                    crate::uart::UART.lock().0 = (0x1000_0000 + crate::memory::HHDM_OFFSET.load(Ordering::Relaxed)) as *mut crate::uart::Uart16550;
+                }
+                println!("Failed to map UART, using HHDM UART");
+
+                // Forget lock so it is locked when returned to the faulting area
+                let _lock = crate::uart::UART.lock();
+                core::mem::forget(_lock);
+                return;
+            } else {
+                println!("{:#x?}", regs);
+    
+                println!("Cause: {:?}", trap);
+                println!("Stval: 0x{:x}", stval);
+            }
+        },
+        Trap::SupervisorExternalInterrupt => {
+            plic::handle_external();
+            return;
+        },
+        Trap::UserModeEnvironmentCall => {
+            regs.sepc += 4;
+            crate::arch::syscalls::syscall_core(regs);
+            return;
+        },
+        Trap::Breakpoint => {
+            let mut reader = task::CURRENT_USER_TASK.write();
+            let cur_task = reader.current_task_mut();
+            cur_task.waiting_on = task::WaitSrc::Breakpoint;
+
+            core::mem::drop(reader);
+
+            task::advance_task(regs);
+
+            return;
+        },
         _ => {
             println!("{:#x?}", regs);
 

@@ -11,6 +11,9 @@ use linked_list::LinkedListAllocator;
 pub mod pmm;
 pub mod vmm;
 pub mod linked_list;
+pub mod dma;
+
+pub use dma::*;
 
 pub static HEAP: SyncUnsafeCell<[u8; 16384]> = SyncUnsafeCell::new([0; 16384]);
 
@@ -19,36 +22,36 @@ pub static ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAlloca
 
 pub static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
 
-pub fn init_tls() {
+/// # Safety
+/// Can only be called once per core
+pub unsafe fn init_tls() {
     use super::utils::linker;
 
-    unsafe {
-        let tdata_start = linker::__tdata_start.as_usize();
-        let tdata_end = linker::__tdata_end.as_usize();
+    let tdata_start = linker::__tdata_start.as_usize();
+    let tdata_end = linker::__tdata_end.as_usize();
 
-        let tdata_size = tdata_end - tdata_start;
+    let tdata_size = tdata_end - tdata_start;
 
-        let mut frames = tdata_size / 4096;
-        
-        if (tdata_size & 0xfff) != 0 {
-            frames += 1;
-        }
-
-        let tls_base = pmm::REGION_LIST.lock().claim_frames(frames).unwrap();
-
-        for offset in 0..tdata_size {
-            let read_addr = linker::__tdata_start.as_ptr().byte_add(offset);
-            let write_addr = tls_base.byte_add(offset);
-
-            let read = *read_addr;
-            write_addr.write(read);
-        }
-
-        core::arch::asm!(
-            "mv tp, {tls}",
-            tls = in(reg) tls_base
-        );
+    let mut frames = tdata_size / 4096;
+    
+    if (tdata_size & 0xfff) != 0 {
+        frames += 1;
     }
+
+    let tls_base = pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+
+    for offset in 0..tdata_size {
+        let read_addr = linker::__tdata_start.as_ptr().byte_add(offset);
+        let write_addr = tls_base.byte_add(offset);
+
+        let read = *read_addr;
+        write_addr.write(read);
+    }
+
+    core::arch::asm!(
+        "mv tp, {tls}",
+        tls = in(reg) tls_base
+    );
 }
 
 bitfield::bitfield! {
@@ -95,12 +98,14 @@ bitfield::bitfield! {
     pub struct VirtualAddress(u64);
     impl Debug;
     u64;
-    get_page_offset, set_page_offset: 11, 0;
-    get_vpn0, set_vpn0: 20, 12;
-    get_vpn1, set_vpn1: 29, 21;
-    get_vpn2, set_vpn2: 38, 30;
-    get_vpn3, set_vpn3: 47, 39;
-    get_vpn4, set_vpn4: 56, 48;
+    pub get_page_offset, set_page_offset: 11, 0;
+    pub get_vpn0, set_vpn0: 20, 12;
+    pub get_vpn1, set_vpn1: 29, 21;
+    pub get_vpn2, set_vpn2: 38, 30;
+    pub get_vpn3, set_vpn3: 47, 39;
+    pub get_vpn4, set_vpn4: 56, 48;
+
+    pub get_vpns, set_vpns: 56, 12;
 }
 
 impl VirtualAddress {
@@ -159,6 +164,19 @@ impl VirtualAddress {
             PageLevel::PageOffset => self.get_page_offset(),
         }
     }
+
+    pub fn set_index(&mut self, index: vmm::PageLevel, val: u64) {
+        use vmm::PageLevel;
+
+        match index {
+            PageLevel::Level1 => self.set_vpn0(val),
+            PageLevel::Level2 => self.set_vpn1(val),
+            PageLevel::Level3 => self.set_vpn2(val),
+            PageLevel::Level4 => self.set_vpn3(val),
+            PageLevel::Level5 => self.set_vpn4(val),
+            PageLevel::PageOffset => self.set_page_offset(val),
+        }
+    }
 }
 
 pub fn virt_to_phys(virt: VirtualAddress) -> PhysicalAddress {
@@ -189,26 +207,24 @@ fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
 }
 
-/// All reads/writes are volatile
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub struct VolatileCell<T>(T);
+// Code taken from Spark, intellectual property of Xvanc and Spark developers, more information can be found at https://github.com/bolt-os/spark
+#[macro_export]
+macro_rules! size_of {
+    ($t:ty) => {
+        ::core::mem::size_of::<$t>()
+    };
+}
 
-impl<T> VolatileCell<T> {
-    pub fn write(&mut self, val: T) {
-        let ptr = core::ptr::addr_of_mut!(self.0);
-        unsafe {
-            ptr.write_volatile(val);
-        }
-    }
-
-    pub fn read(&self) -> T {
-        let ptr = core::ptr::addr_of!(self.0);
-        unsafe {
-            ptr.read_volatile()
-        }
-    }
-
-    pub const fn new(val: T) -> Self {
-        Self(val)
-    }
+#[macro_export]
+macro_rules! pages_for {
+    ($size:expr) => {
+        ($size as usize + $crate::memory::vmm::PAGE_SIZE - 1) / $crate::memory::vmm::PAGE_SIZE
+    };
+    ($size:expr, $page_size:expr) => {{
+        let page_size = $page_size;
+        ($size as usize + (page_size - 1)) / page_size
+    }};
+    (type $t:ty $(, $page_size:expr)?) => {
+        pages_for!(::core::mem::size_of::<$t>() $(, $page_size)?)
+    };
 }

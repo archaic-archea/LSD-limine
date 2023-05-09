@@ -13,63 +13,82 @@ use crate::println;
 
 use super::{VirtualAddress, PhysicalAddress, pmm};
 
+pub const PAGE_SHIFT: u32 = 12;
+pub const PAGE_SIZE: usize = 0x1000;
+
 pub static LEVELS: AtomicU8 = AtomicU8::new(0);
 
-pub struct Vmm <'a, 'b>(vmem::Vmem<'a, 'b>);
+pub struct Vmm <'a, 'b>(pub vmem::Vmem<'a, 'b>);
 
 impl<'a, 'b> Vmm <'a, 'b> {
     pub const fn new(name: &'static str) -> Self {
         Self(vmem::Vmem::new(alloc::borrow::Cow::Borrowed(name), 1, None))
     }
 
-    pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, contiguous: bool) -> Result<usize, vmem::Error> {
-        let section = self.0.alloc(size, strategy);
+    pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
+        let section = self.0.alloc(size, strategy)?;
 
-        if section.is_ok() {
-            let section_data = section.as_ref().unwrap();
+        let mut return_val = (0, None);
 
-            let mut frames = size / 4096;
+        let section_data = section;
+        return_val.0 = section_data;
 
-            if (size % 4096) != 0 {
-                frames += 1;
-            }
+        let mut claim: Result<*mut u8, alloc::string::String>;
+        let mut claim_phys = PhysicalAddress(0);
+        
+        let mut frames = size / 4096;
+        if (size % 4096) != 0 {
+            frames += 1;
+        }
 
-            let mut claim: Option<*mut u8>;
-            let mut claim_phys = PhysicalAddress(0);
+        let size = frames * 4096;
 
-            if contiguous {
-                claim = pmm::REGION_LIST.lock().claim_frames(frames);
+
+        if physically_contiguous {
+            claim = pmm::REGION_LIST.lock().claim_continuous(frames);
+            claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+            return_val.1 = Some(claim_phys);
+        }
+
+        for offset in (0..size).step_by(4096) {
+            if !physically_contiguous {
+                claim = Ok(pmm::REGION_LIST.lock().claim());
                 claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
             }
 
-            for offset in (0..size).step_by(4096) {
-                if !contiguous {
-                    claim = Some(pmm::REGION_LIST.lock().claim());
-                    claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
-                } else {
-                    claim_phys.0 += 4096;
-                }
+            let level = PageLevel::from_usize(
+                LEVELS.load(Ordering::Relaxed)as usize
+            );
 
-                let level = PageLevel::from_usize(
-                    LEVELS.load(Ordering::Relaxed)as usize
+            let virt = VirtualAddress((section_data + offset) as u64);
+
+            unsafe {
+                map(
+                    current_table().cast_mut(), 
+                    virt, 
+                    claim_phys, 
+                    level, 
+                    PageLevel::Level1, 
+                    &mut pmm::REGION_LIST.lock(),
+                    flags
                 );
+            }
 
-                let virt = VirtualAddress((*section_data + offset) as u64);
+            flush_tlb(Some(virt), None);
 
-                println!("Mapping");
-                unsafe {
-                    map(current_table().cast_mut(), virt, claim_phys, level, PageLevel::Level1, &mut pmm::REGION_LIST.lock());
-                }
-
-                flush_tlb(Some(virt), None);
+            if physically_contiguous { 
+                claim_phys.0 += 4096;
             }
         }
 
-        section
+        Ok(return_val)
     }
 
+    /// Free a segment allocated by `alloc`
     /// # Safety
-    /// The segment must have previously been allocated by a call to alloc().
+    /// The segment must have previously been allocated by a call to `alloc`
+    /// # Panics
+    /// This function panics if the segment cannot be found in the allocation hash table.
     pub unsafe fn free(&self, base: usize, size: usize) {
         self.0.free(base, size);
 
@@ -82,8 +101,86 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-            // FIXME: Causes error with the page tables :uhhh:
-            super::pmm::REGION_LIST.lock().shove(phys as *mut u8);
+            super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
+
+            flush_tlb(Some(virt), None);
+        }
+    }
+    
+    pub fn alloc_constrained(&self, layout: vmem::Layout, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
+        let section = self.0.alloc_constrained(layout, strategy)?;
+        let size = layout.size();
+
+        let mut return_val = (section, None);
+
+        let section_data = section;
+
+        let mut frames = size / 4096;
+
+        if (size % 4096) != 0 {
+            frames += 1;
+        }
+
+        let mut claim: Result<*mut u8, alloc::string::String>;
+        let mut claim_phys = PhysicalAddress(0);
+
+        if physically_contiguous {
+            claim = pmm::REGION_LIST.lock().claim_continuous(frames);
+            claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+
+            return_val.1 = Some(claim_phys);
+        }
+
+        for offset in (0..size).step_by(4096) {
+            if !physically_contiguous {
+                claim = Ok(pmm::REGION_LIST.lock().claim());
+                claim_phys = PhysicalAddress((claim.unwrap() as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed));
+            } else {
+                claim_phys.0 += 4096;
+            }
+
+            let level = PageLevel::from_usize(
+                LEVELS.load(Ordering::Relaxed)as usize
+            );
+
+            let virt = VirtualAddress((section_data + offset) as u64);
+
+            unsafe {
+                map(
+                    current_table().cast_mut(), 
+                    virt, 
+                    claim_phys, 
+                    level, 
+                    PageLevel::Level1, 
+                    &mut pmm::REGION_LIST.lock(),
+                    flags
+                );
+            }
+
+            flush_tlb(Some(virt), None);
+        }
+
+        Ok(return_val)
+    }
+
+    /// Free a segment allocated by `alloc_constrained`
+    /// # Safety
+    /// The segment must have previously been allocated by a call to `alloc_constrained`
+    /// # Panics
+    /// This function panics if the segment cannot be found in the allocation hash table.
+    pub unsafe fn free_constrained(&self, base: usize, size: usize) {
+        self.0.free_constrained(base, size);
+
+        for offset in (0..size).step_by(4096) {
+            let virt = VirtualAddress((base + offset) as u64);
+
+            let level = PageLevel::from_usize(
+                LEVELS.load(Ordering::Relaxed)as usize
+            );
+
+            let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
+
+            super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
         }
@@ -98,7 +195,7 @@ pub fn new_with_upperhalf() -> *mut PageTable {
     let new_table = pmm::REGION_LIST.lock().claim() as *mut PageTable;
 
     unsafe {
-        clone_table_range(&*current_table(), &mut *new_table, 256..512);
+        clone_table_range(current_table(), new_table, 256..512);
     }
 
     new_table
@@ -121,11 +218,18 @@ pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
     }
 }
 
-pub fn init() {
+/// # Safety
+/// Must only be called once on the boot strap processor
+pub unsafe fn init() {
     let fdt_ptr = (*crate::FDT_PTR.lock()) as *const u8;
     let fdt = unsafe {fdt::Fdt::from_ptr(fdt_ptr).expect("Invalid FDT ptr")};
     let node = fdt.find_node("/cpus/cpu@0").unwrap();
     let mmu_type = node.property("mmu-type").unwrap().as_str().unwrap();
+    let isa = node.property("riscv,isa").unwrap();
+    let extensions = crate::CpuData::parse_str(isa.as_str().unwrap());
+    println!("\nExtensions: {:#?}", extensions);
+
+    crate::CPU_DATA.set(extensions);
 
     let mmu_type = match mmu_type {
         "riscv,sv39" => {
@@ -152,6 +256,9 @@ pub fn init() {
     println!("Memory size: {:?}MiB", memory_size / 1048576);
 
     let root_table_claim = pmm::REGION_LIST.lock().claim() as *mut PageTable;
+    for entry in (*root_table_claim).0.iter_mut() {
+        entry.0 = 0;
+    }
 
     unsafe {
         clone_table_range(&*current_table(), &mut *root_table_claim, 256..512);
@@ -170,8 +277,22 @@ pub fn init() {
         
         println!("{:?} 0x{:x} -> 0x{:x}", level, virt.0, phys.0);
 
+        let io_flags = if crate::CPU_DATA.get().contains(crate::CpuData::SVPBMT) {
+            PageFlags::GLOBAL | PageFlags::READ | PageFlags::WRITE | PageFlags::IO
+        } else {
+            PageFlags::GLOBAL | PageFlags::READ | PageFlags::WRITE
+        };
+
         unsafe {
-            map(root_table_claim, virt, phys, level, PageLevel::Level3, &mut reg_list_lock);
+            map(
+                root_table_claim, 
+                virt, 
+                phys, 
+                level, 
+                PageLevel::Level3, 
+                &mut reg_list_lock,
+                io_flags,
+            );
         }
     }
     println!("Mapped IO");
@@ -186,7 +307,7 @@ pub fn init() {
         ) >> 12
     );
 
-    new_satp.set_mode(PageType::Sv48 as u64);
+    new_satp.set_mode(mmu_type as u64);
 
     unsafe {
         new_satp.set();
@@ -196,23 +317,26 @@ pub fn init() {
     println!("Virtual memory initialized");
 }
 
-pub fn clone_table_range(src: &PageTable, dest: &mut PageTable, range: core::ops::Range<usize>) {
+/// FIXME: Somehow mutates source table when using for SMP
+/// # Safety
+/// Only run on an unloaded table
+pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
     for index in range {
-        let src_entry = &src.0[index];
-        let dest_entry = &mut dest.0[index];
+        let src_entry = (src as *const PageEntry).add(index);
+        let dest_entry = (dest as *mut PageEntry).add(index);
 
-        if src_entry.is_branch() {
+        if (*src_entry).is_branch() {
             *dest_entry = *src_entry;
 
-            let new_claim = pmm::REGION_LIST.lock().claim() as u64;
-            let phys_new_claim = new_claim - super::HHDM_OFFSET.load(Ordering::Relaxed);
+            let new_table_alloc = pmm::REGION_LIST.lock().claim() as *mut PageTable;
+            let new_phys = (new_table_alloc as u64) - super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-            dest_entry.set_ppn(phys_new_claim >> 12);
+            (*dest_entry).set_ppn(new_phys >> 12);
 
-            unsafe {
-                clone_table_range(&*src_entry.table(), &mut *dest_entry.table().cast_mut(), 0..512);
-            }
-        } else if src_entry.is_leaf() {
+            let old_table = (*src_entry).table();
+
+            clone_table_range(old_table, new_table_alloc, 0..512);
+        } else if (*src_entry).is_leaf() {
             *dest_entry = *src_entry;
         } else {
             *dest_entry = PageEntry(0);
@@ -242,8 +366,6 @@ pub unsafe fn unmap(
     let mut table = table;
     let mut level = level;
 
-    println!("Unmapping 0x{:x}", virt.0);
-
     loop {
         let table_index = virt.index(level);
 
@@ -255,7 +377,7 @@ pub unsafe fn unmap(
                 panic!("No leaf found while unmapping");
             }
             
-            println!("Leaf at index {} of table {:?}", table_index, table);
+            //println!("Leaf at index {} of table {:?}", table_index, table);
             let return_addr = entry.get_ppn() << 12;
             entry.0 = 0;
 
@@ -270,14 +392,14 @@ pub unsafe fn unmap(
             if entry.is_leaf() {
                 panic!("Unexpected entry");
             } else if entry.is_branch() {
-                println!("Table at index {} of table {:?}", table_index, table);
+                //println!("Table at index {} of table {:?}", table_index, table);
                 let next_table_phys = entry.get_ppn() << 12;
                 let next_table = next_table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-                let tmp = table;
+                //let tmp = table;
                 table = next_table as *mut PageTable;
 
-                println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
+                //println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
             } else {
                 panic!("No entry found for virt 0x{:x}\ntable {:?}\ndump: {:#?}\nentry 0x{:x}", virt.0, table, *table, (*table).0[table_index as usize].0);
             }
@@ -296,7 +418,9 @@ pub unsafe fn map(
     level: PageLevel, 
     target_level: PageLevel,
     pmm_lock: &mut MutexGuard<super::pmm::FreeList>,
+    flags: PageFlags,
 ) {
+    //println!("Mapping 0x{:x}", virt.0);
     let mut table = table;
     let mut level = level;
 
@@ -307,12 +431,12 @@ pub unsafe fn map(
             let mut table_copy = table.read_volatile();
             let entry = &mut table_copy.0[table_index as usize];
 
-            println!("Made leaf at index {} of table {:?}", table_index, table);
+            //println!("Made leaf at index {} of table {:?}", table_index, table);
+            entry.0 = 0;
+
             entry.set_ppn(phys.get_ppn());
+            entry.0 |= flags.bits();
             entry.set_valid(true);
-            entry.set_read(true);
-            entry.set_write(true);
-            entry.set_exec(true);
 
             table.write_volatile(table_copy);
             return;
@@ -321,15 +445,19 @@ pub unsafe fn map(
             let entry = table_copy.0[table_index as usize];
 
             if entry.is_branch() {
-                println!("Found table at index {} of table {:?}", table_index, table);
+                //println!("Found table at index {} of table {:?}", table_index, table);
                 table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
             } else if entry.is_leaf() {
                 panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
             } else if !entry.get_valid() {
                 let entry = &mut table_copy.0[table_index as usize];
 
-                println!("Made table at index {} of table {:?}", table_index, table);
+                //println!("Made table at index {} of table {:?}", table_index, table);
                 let new_table = pmm_lock.claim() as *mut PageTable;
+                for entry in (*new_table).0.iter_mut() {
+                    entry.0 = 0;
+                }
+
                 let new_table_phys = (new_table as u64) - super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
 
                 entry.set_ppn(new_table_phys >> 12);
@@ -347,10 +475,25 @@ pub unsafe fn map(
 
 #[repr(u64)]
 pub enum PageSize {
+    None = 0x0,
     Small = 0x1000,
     Medium = 0x20_0000,
     Large = 0x4000_0000,
     Huge = 0x80_0000_0000,
+    Colossal = 0x1_0000_0000_0000,
+}
+
+impl PageSize {
+    pub fn from_level(level: PageLevel) -> Self {
+        match level {
+            PageLevel::Level1 => Self::Small,
+            PageLevel::Level2 => Self::Medium,
+            PageLevel::Level3 => Self::Large,
+            PageLevel::Level4 => Self::Huge,
+            PageLevel::Level5 => Self::Colossal,
+            _ => Self::None
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -368,6 +511,15 @@ impl PageType {
             Self::Sv39 => 0xffffffc000000000,
             Self::Sv48 => 0xffff800000000000,
             Self::Sv57 => 0xff00000000000000
+        }
+    }
+
+    pub fn from_levels(levels: PageLevel) -> Self {
+        match levels {
+            PageLevel::Level3 => Self::Sv39,
+            PageLevel::Level4 => Self::Sv48,
+            PageLevel::Level5 => Self::Sv57,
+            _ => Self::Bare
         }
     }
 }
@@ -404,6 +556,17 @@ impl PageLevel {
             _ => 0
         }
     }
+
+    pub fn as_page_size(&self) -> PageSize {
+        match self {
+            Self::Level1 => PageSize::Small,
+            Self::Level2 => PageSize::Medium,
+            Self::Level3 => PageSize::Large,
+            Self::Level4 => PageSize::Huge,
+            Self::Level5 => PageSize::Colossal,
+            _ => PageSize::None
+        }
+    }
 }
 
 use core::ops;
@@ -434,7 +597,7 @@ impl ops::Add<usize> for PageLevel {
 }
 
 #[repr(transparent)]
-pub struct PageTable([PageEntry; 512]);
+pub struct PageTable(pub [PageEntry; 512]);
 
 impl core::fmt::Debug for PageTable {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -451,13 +614,27 @@ impl core::fmt::Debug for PageTable {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PageFlags: u64 {
+        const READ =    0b000010;
+        const WRITE =   0b000100;
+        const EXECUTE = 0b001000;
+        const USER =    0b010000;
+        const GLOBAL =  0b100000;
+
+        const NC = 0b01 << 61;
+        const IO = 0b10 << 61;
+    }
+}
+
 bitfield::bitfield!{
     #[derive(Copy, Clone)]
     #[repr(transparent)]
-    struct PageEntry(u64);
+    pub struct PageEntry(u64);
     impl Debug;
     u64;
-    get_valid, set_valid: 0;
+    pub get_valid, set_valid: 0;
     get_read, set_read: 1;
     get_write, set_write: 2;
     get_exec, set_exec: 3;
@@ -498,7 +675,9 @@ impl PageEntry {
 
 bitfield::bitfield!{
     #[repr(transparent)]
+    #[derive(Clone, Copy)]
     pub struct Satp(u64);
+    impl Debug;
     
     pub get_ppn, set_ppn: 43, 0;
     pub get_asid, set_asid: 59, 44;
@@ -531,6 +710,7 @@ impl Default for Satp {
 }
 
 pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static str> {
+    //println!("Finding physical for address 0x{:x}", virt.0);
     let mut table = current_table();
 
     let mut levels = PageLevel::from_usize(LEVELS.load(Ordering::Relaxed) as usize);
@@ -540,7 +720,7 @@ pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static st
             let entry = &(*table).0[virt.index(levels) as usize];
 
             if entry.is_leaf() {
-                let mut addr = PhysicalAddress(0);
+                let mut addr = PhysicalAddress(entry.get_ppn() << 12);
 
                 let mask: u64 = match levels {
                     PageLevel::Level1 => 0xfff,
@@ -555,9 +735,6 @@ pub fn virt_to_phys(virt: VirtualAddress) -> Result<PhysicalAddress, &'static st
 
                 addr.0 &= inv_mask;
                 addr.0 |= virt.0 & mask;
-
-                println!("Mask level {levels:?}");
-                println!("mask: 0b{mask:064b}\nvirt: 0b{:064b}", virt.0);
 
                 return Ok(addr);
             } else if entry.is_branch() {

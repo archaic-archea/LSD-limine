@@ -1,4 +1,7 @@
 /LSD/target
+/LSD-Userspace/target
+/null_task/target
+/lsd_lib/target
 /xtask/target
 /root
 /debug.log

@@ -33,10 +33,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "elf"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2b183d6ce6ca4cf30e3db37abf5b52568b5f9015c97d9fbdd7026aa5dcdd758"
+
+[[package]]
 name = "fdt"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "784a4df722dc6267a04af36895398f59d21d07dce47232adf31ec0ff2fa45e67"
+
+[[package]]
+name = "libsa"
+version = "0.1.0"
+source = "git+https://github.com/bolt-os/libsa#b5f0a9af7e6cd1426418b7e5f9678f97b3e00fd3"
 
 [[package]]
 name = "limine"
@@ -70,7 +81,10 @@ name = "lsd"
 version = "0.1.0"
 dependencies = [
  "bitfield",
+ "bitflags 2.2.1",
+ "elf",
  "fdt",
+ "libsa",
  "limine",
  "log",
  "sbi",
@@ -113,7 +127,7 @@ dependencies = [
 [[package]]
 name = "vmem"
 version = "0.1.0"
-source = "git+https://github.com/xvanc/vmem.git#eae7f182bed35908b8f0e582bad6ba50b40121ae"
+source = "git+https://github.com/archaic-archea/vmem.git#80b051ec37cc9c62ed3d3566cd4656c7676e21aa"
 dependencies = [
  "bitflags 2.2.1",
  "log",
