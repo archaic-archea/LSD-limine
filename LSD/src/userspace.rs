@@ -38,37 +38,32 @@ pub fn load(bytes: &[u8]) -> usize {
     for entry in table {
         // If type is LOAD, load it into memory
         if entry.p_type == 0x1 {
-            let mut frames = entry.p_memsz / 4096;
-            if (entry.p_memsz % 4096) != 0 {
-                frames += 1;
-            }
+            for (page_offset, vaddr) in (entry.p_vaddr..entry.p_vaddr + entry.p_memsz).step_by(0x1000).enumerate() {
+                println!("Page offset: 0x{:x}", page_offset);
+                let physical = pmm::REGION_LIST.lock().claim();
 
-            let current_entry = pmm::REGION_LIST.lock().claim_continuous(frames as usize).unwrap();
-
-            if entry.p_filesz == 0 {
-                for i in 0..entry.p_memsz as usize {
-                    unsafe {
-                        *current_entry.add(i) = 0;
+                if entry.p_filesz == 0 {
+                    for i in 0..4096 {
+                        unsafe {
+                            *physical.add(i) = 0;
+                        }
+                    }
+                } else {
+                    for i in 0..4096 {
+                        unsafe {
+                            *physical.add(i) = bytes[i + page_offset + entry.p_offset as usize];
+                        }
                     }
                 }
-            }
 
-            for i in 0..entry.p_filesz as usize {
-                unsafe {
-                    *current_entry.add(i) = bytes[i + entry.p_offset as usize];
-                }
-            }
+                let flags = Flags::from_bits_retain(entry.p_flags);
+                let flags = flags.to_pageflags();
+                let flags = flags | vmm::PageFlags::USER;
 
-            let flags = Flags::from_bits_retain(entry.p_flags);
-            let flags = flags.to_pageflags();
-            let flags = flags | vmm::PageFlags::USER;
+                let paddr = (physical as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
 
-            let base_phys = (current_entry as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-            let base_virt = entry.p_vaddr;
-
-            for offset in (0..entry.p_memsz).step_by(4096) {
-                let phys = memory::PhysicalAddress(base_phys + offset);
-                let virt = memory::VirtualAddress(base_virt + offset);
+                let phys = memory::PhysicalAddress(paddr);
+                let virt = memory::VirtualAddress(vaddr);
 
                 unsafe {
                     vmm::map(
