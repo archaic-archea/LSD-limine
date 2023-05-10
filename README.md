@@ -1,15 +1,15 @@
-## RISC-V Barebones
-This is a small repository to act as a barebones start for RISC-V OSDev
+## LSD-limine
+LSD is a WIP operating system, it currently supports a simple userspace, and a few syscalls which can be accessed through `lsd_lib`
 
 ## Running
 ```
-$ git clone https://github.com/archaic-archea/risc-v-bare
-$ cd risc-v-bare
+$ git clone https://github.com/archaic-archea/LSD-limine
+$ cd LSD-limine
 $ cargo xtask run
 ```
 ## Building
 ```
-$ git clone https://github.com/archaic-archea/risc-v-bare
-$ cd risc-v-bare
+$ git clone https://github.com/archaic-archea/LSD-limine
+$ cd LSD-limine
 $ cargo xtask build
 ```
