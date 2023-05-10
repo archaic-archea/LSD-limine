@@ -23,7 +23,21 @@ impl core::fmt::Write for RootPrinter {
     }
 }
 
-pub fn extend_heap() {}
+pub fn extend_heap(size: usize) -> *mut u8 {
+    let out: usize;
+
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a0") 1,
+            in("a1") 1,
+            in("a2") size,
+            lateout("a0") out
+        );
+    }
+
+    out as *mut u8
+}
 
 pub fn in_char() -> char {
     let out: u32;
