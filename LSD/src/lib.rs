@@ -46,7 +46,7 @@ use spin::Mutex;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{self, AtomicPtr, AtomicBool};
 
-static LOWER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("lower_half");
+static LOWER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("kernel_lower_half");
 static HIGHER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("higher_half");
 
 pub static CPU_DATA: SetOnce<CpuData> = SetOnce::new(CpuData::empty());
