@@ -27,7 +27,7 @@ struct CoreInit {
 
 static mut CORE_INIT: CoreInit = CoreInit {sp: 0, satp: 0, claimed: core::sync::atomic::AtomicBool::new(false)};
 
-static USER_PROG: &[u8] = include_bytes!("../../LSD-Userspace/target/riscv64gc-unknown-none-elf/release/LSD-Userspace");
+static USER_PROG: &[u8] = include_bytes!("../../LSD-Userspace/target/riscv64gc-unknown-none-elf/release/lsd_userspace");
 static NULL_TASK: &[u8] = include_bytes!("../../null_task/target/riscv64gc-unknown-none-elf/release/null_task");
 
 extern "C" fn kmain() -> ! {
