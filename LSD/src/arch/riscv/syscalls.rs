@@ -74,24 +74,22 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
             
             let vaddrs = (vaddr..vaddr + (frames as u64) * 0x1000).step_by(0x1000);
 
-            let table = (cur_task.task_table.get_ppn() << 12) as *mut vmm::PageTable;
+            let table = (cur_task.task_table.get_ppn() << 12) + memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+            let table = table as *mut vmm::PageTable;
             println!("extending heap on current task");
 
             for vaddr in vaddrs {
-                println!("Test with vaddr 0x{:x}", vaddr);
                 let paddr = claims.next().unwrap();
 
                 let virt = memory::VirtualAddress(vaddr);
                 let phys = memory::PhysicalAddress(paddr);
-                println!("Test with vaddr 0x{:x}", vaddr);
-
+                
                 let mut lock = pmm::REGION_LIST.lock();
 
                 let flags = vmm::PageFlags::READ | vmm::PageFlags::WRITE | vmm::PageFlags::USER;
 
                 let level = vmm::LEVELS.load(core::sync::atomic::Ordering::Relaxed) as usize;
                 let level = vmm::PageLevel::from_usize(level);
-                println!("Test with vaddr 0x{:x}", vaddr);
 
                 unsafe {
                     vmm::map(
@@ -106,9 +104,7 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
 
                     core::arch::asm!("sfence.vma");
                 }
-                println!("Test with vaddr 0x{:x}", vaddr);
             }
-            println!("extending heap on current task");
         },
         2 => {
             crate::traps::task::update_current(trap_frame);
