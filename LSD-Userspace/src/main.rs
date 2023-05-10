@@ -10,13 +10,10 @@ use std::println;
 #[no_mangle]
 pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
-    std::spawn_thread(new_thread);
 
-    println!("Hello from root thread on task 0x{:x}", task_id);
-}
+    let ext_hp = std::extend_heap(0x1000);
 
-pub fn new_thread() {
-    println!("Printing on thread!!!!");
+    println!("Extended heap location: {:?}", ext_hp);
 }
 
 #[naked]
