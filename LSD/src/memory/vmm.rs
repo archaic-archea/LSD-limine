@@ -22,7 +22,7 @@ pub struct Vmm <'a, 'b>(pub vmem::Vmem<'a, 'b>);
 
 impl<'a, 'b> Vmm <'a, 'b> {
     pub const fn new(name: &'static str) -> Self {
-        Self(vmem::Vmem::new(alloc::borrow::Cow::Borrowed(name), 1, None))
+        Self(vmem::Vmem::new(alloc::borrow::Cow::Borrowed(name), 4096, None))
     }
 
     pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
@@ -36,10 +36,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
         let mut claim: Result<*mut u8, alloc::string::String>;
         let mut claim_phys = PhysicalAddress(0);
         
-        let mut frames = size / 4096;
-        if (size % 4096) != 0 {
-            frames += 1;
-        }
+        let frames = size.div_ceil(4096);
 
         let size = frames * 4096;
 
@@ -115,11 +112,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
         let section_data = section;
 
-        let mut frames = size / 4096;
-
-        if (size % 4096) != 0 {
-            frames += 1;
-        }
+        let frames = size.div_ceil(0x1000);
 
         let mut claim: Result<*mut u8, alloc::string::String>;
         let mut claim_phys = PhysicalAddress(0);
