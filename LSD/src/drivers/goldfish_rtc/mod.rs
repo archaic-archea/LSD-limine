@@ -17,7 +17,8 @@ impl Time {
         let low = self.0.read()[0] as u64;
         let high = self.0.read()[1] as u64;
 
-        ((high << 32) + low) / 1_000_000_000
+        //((high << 32) + low) / 1_000_000_000
+        ((high << 32) + low) / 1_000
     }
 }
 
@@ -39,7 +40,9 @@ pub struct UnixTimestamp(pub u64);
 
 impl UnixTimestamp {
     pub fn date(&self) -> Date {
-        let seconds = self.0 as usize;
+        let micros = self.0 as usize;
+
+        let seconds = micros / 1_000_000;
         let minutes = seconds / 60;
         let hours = seconds / 3600;
         let days = (seconds % 31556926) / 86400;

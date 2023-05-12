@@ -14,7 +14,7 @@ pub fn init_task_ids() {
     TASK_IDS.lock().add(0, usize::MAX).unwrap();
 }
 
-pub fn start_tasks() -> ! {
+pub fn start_tasks() {
     let lock = crate::traps::task::CURRENT_USER_TASK.read();
     let task = *lock.current_task();
 
@@ -26,7 +26,7 @@ pub fn start_tasks() -> ! {
     }
 }
 
-pub fn load(bytes: &[u8]) -> usize {
+pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> usize {
     use crate::memory::{pmm, vmm, self};
 
     let elfbytes = elf::ElfBytes::<elf::endian::LittleEndian>::minimal_parse(bytes).unwrap();
@@ -39,7 +39,6 @@ pub fn load(bytes: &[u8]) -> usize {
         // If type is LOAD, load it into memory
         if entry.p_type == 0x1 {
             for (page_offset, vaddr) in (entry.p_vaddr..entry.p_vaddr + entry.p_memsz).step_by(0x1000).enumerate() {
-                println!("Page offset: 0x{:x}", page_offset);
                 let physical = pmm::REGION_LIST.lock().claim();
 
                 if entry.p_filesz == 0 {
@@ -115,7 +114,6 @@ pub fn load(bytes: &[u8]) -> usize {
         let virt = memory::VirtualAddress(stack_vaddr + i);
         let phys = memory::PhysicalAddress(stack_paddr + i);
         unsafe {
-            println!("Mapping 0x{:x} to 0x{:x}", virt.0, phys.0);
             vmm::map(
                 new_table, 
                 virt, 
@@ -146,7 +144,7 @@ pub fn load(bytes: &[u8]) -> usize {
         None
     );
 
-    task_tm.add(0, usize::MAX).unwrap();
+    task_tm.add(1, usize::MAX - 1).unwrap();
 
     let boxed_tm = alloc::boxed::Box::new(task_tm);
     let leaked_tm = alloc::boxed::Box::leak(boxed_tm);

@@ -5,50 +5,62 @@
 // v. 2.0. If a copy of the MPL was not distributed with this file, You can
 // obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::println;
-
 use super::PhysicalAddress;
 use core::{ptr::{NonNull, Pointee}, mem::MaybeUninit};
 
 pub struct DmaRegion<T: ?Sized> {
     phys: PhysicalAddress,
     virt: NonNull<T>,
+    size: usize
+}
+
+impl<T: ?Sized> core::fmt::Debug for DmaRegion<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "DmaRegion {{\n\tphys: 0x{:x}\n\tvirt: 0x{:x}\n\tsize: 0x{:x}\n}}", self.phys.0, self.virt.addr().get(), self.size)
+    }
 }
 
 impl<T: Sized> DmaRegion<[MaybeUninit<T>]> {
     pub fn new_many(n_elements: usize) -> Self {
-        let size = core::mem::size_of::<T>() * n_elements;
-        
-        let mut frames = size / 4096;
-        if (size % 4096) != 0 {
-            frames += 1;
-        }
+        use super::vmm::PageFlags;
 
-        let alloc = crate::memory::pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+        let layout = vmem::Layout::new(core::mem::size_of::<T>() * n_elements);
+        let layout = layout.align(core::mem::align_of::<T>());
+
+        let alloc = crate::LOWER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::BestFit, 
+            true, 
+            PageFlags::READ | PageFlags::WRITE
+        ).unwrap();
 
         Self { 
-            phys: PhysicalAddress::from_ptr(alloc), 
+            phys: alloc.1.unwrap(), 
             virt: core::ptr::NonNull::new(
                 core::ptr::slice_from_raw_parts_mut(
-                    alloc as *mut core::mem::MaybeUninit<T>, 
+                    alloc.0 as *mut core::mem::MaybeUninit<T>, 
                     n_elements
                 )
             ).unwrap(),
+            size: core::mem::size_of::<T>() * n_elements
         }
     }
 
     pub unsafe fn zeroed_many(n_elements: usize) -> Self {
-        let size = core::mem::size_of::<T>() * n_elements;
+        use super::vmm::PageFlags;
 
-        let mut frames = size / 4096;
-        if (size % 4096) != 0 {
-            frames += 1;
-        }
+        let layout = vmem::Layout::new(core::mem::size_of::<T>() * n_elements);
+        let layout = layout.align(core::mem::align_of::<T>());
 
-        let alloc = crate::memory::pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+        let alloc = crate::LOWER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::BestFit, 
+            true, 
+            PageFlags::READ | PageFlags::WRITE
+        ).unwrap();
 
         for i in 0..(core::mem::size_of::<T>() * n_elements) {
-            let ptr = alloc;
+            let ptr = alloc.0 as *mut u8;
 
             unsafe {
                 *ptr.add(i) = 0;
@@ -56,22 +68,24 @@ impl<T: Sized> DmaRegion<[MaybeUninit<T>]> {
         }
 
         Self { 
-            phys: PhysicalAddress::from_ptr(alloc), 
+            phys: alloc.1.unwrap(), 
             virt: core::ptr::NonNull::new(
                 core::ptr::slice_from_raw_parts_mut(
-                    alloc as *mut core::mem::MaybeUninit<T>, 
+                    alloc.0 as *mut core::mem::MaybeUninit<T>, 
                     n_elements
                 )
             ).unwrap(),
+            size: core::mem::size_of::<T>() * n_elements
         }
     }
 
     pub unsafe fn assume_init(self) -> DmaRegion<[T]> {
         let phys = self.phys;
         let virt = self.virt;
+        let size = self.size;
         core::mem::forget(self);
 
-        DmaRegion { phys, virt: NonNull::slice_from_raw_parts(virt.cast(), virt.len()) }
+        DmaRegion { phys, virt: NonNull::slice_from_raw_parts(virt.cast(), virt.len()), size }
     }
 }
 
@@ -94,15 +108,17 @@ impl<T: ?Sized> DmaRegion<T> {
         use super::vmm::PageFlags;
         let size = core::mem::size_of_val_raw::<T>(core::ptr::from_raw_parts(core::ptr::null(), metadata));
 
-        let mut frames = size / 4096;
-        if (size % 4096) != 0 {
-            frames += 1;
-        }
+        let layout = vmem::Layout::new(size);
 
-        let alloc = crate::memory::pmm::REGION_LIST.lock().claim_continuous(frames).unwrap();
+        let alloc = crate::LOWER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::BestFit, 
+            true, 
+            PageFlags::READ | PageFlags::WRITE
+        ).unwrap();
 
         if zero {
-            let ptr = alloc;
+            let ptr = alloc.0 as *mut u8;
             
             for i in 0..size {
                 *ptr.add(i) = 0;
@@ -110,10 +126,11 @@ impl<T: ?Sized> DmaRegion<T> {
         }
 
         Self { 
-            phys: PhysicalAddress::from_ptr(alloc), 
+            phys: alloc.1.unwrap(), 
             virt: core::ptr::NonNull::new(
-                core::ptr::from_raw_parts_mut(alloc as *mut (), metadata)
+                core::ptr::from_raw_parts_mut(alloc.0 as *mut (), metadata)
             ).unwrap(),
+            size
         }
     }
 
@@ -131,9 +148,22 @@ impl<T> DmaRegion<MaybeUninit<T>> {
     where
         T: Pointee<Metadata = ()>,
     {
-        todo!("new function from vanadinite");
-        //let (phys, virt) = alloc_dma_memory(core::mem::size_of::<T>(), DmaAllocationOptions::NONE)?;
-        //Result::Ok(Self { phys, virt: NonNull::from_raw_parts(virt.cast(), ()) })
+        use super::vmm::PageFlags;
+        let layout = vmem::Layout::new(core::mem::size_of::<T>());
+        let flags = PageFlags::WRITE | PageFlags::READ;
+
+        let (virt, phys) = crate::LOWER_HALF.alloc_constrained(
+            layout, 
+            vmem::AllocStrategy::NextFit,
+            true, 
+            flags
+        ).unwrap();
+
+        Self {
+            phys: phys.unwrap(),
+            virt: core::ptr::NonNull::new(virt as *mut core::mem::MaybeUninit<T>).unwrap(),
+            size: core::mem::size_of::<T>()
+        }
     }
 
     pub unsafe fn zeroed() -> Self
@@ -148,9 +178,10 @@ impl<T> DmaRegion<MaybeUninit<T>> {
     pub unsafe fn assume_init(self) -> DmaRegion<T> {
         let phys = self.phys;
         let virt = self.virt;
+        let size = self.size;
         core::mem::forget(self);
 
-        DmaRegion { phys, virt: virt.cast() }
+        DmaRegion { phys, virt: virt.cast(), size }
     }
 }
 
@@ -165,14 +196,17 @@ impl<T: ?Sized> core::ops::Deref for DmaRegion<T> {
 
 impl<T: ?Sized> core::ops::DerefMut for DmaRegion<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        println!("Writing to phys 0x{:x}", self.phys.0);
         unsafe { &mut *self.virt.as_ptr() }
     }
 }
 
 impl<T: ?Sized> core::ops::Drop for DmaRegion<T> {
     // TODO: dealloc memory
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        unsafe {
+            crate::LOWER_HALF.free_constrained(self.virt.addr().get(), self.size);
+        }
+    }
 }
 
 pub struct DmaElement<'a, T> {

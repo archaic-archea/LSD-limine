@@ -55,17 +55,19 @@ extern "C" fn kmain() -> ! {
     unsafe {
         sstatus.set();
     }
+    
+    use lsd::traps::task::Privilege;
 
-    let id = lsd::userspace::load(USER_PROG);
-    println!("Loaded user program task with id 0x{id:x}");
-    let id = lsd::userspace::load(NULL_TASK);
+    let id = lsd::userspace::load(NULL_TASK, Privilege::Guest);
     println!("Loaded null task with id 0x{id:x}");
+    let id = lsd::userspace::load(USER_PROG, Privilege::Root);
+    println!("Loaded user program task with id 0x{id:x}");
     lsd::timing::Unit::MilliSeconds(10).set().unwrap();
     lsd::userspace::start_tasks();
 
     // If we get here, thats bad, very bad
 
-    pause_loop()
+    unreachable!("How the hell did we get here?");
 }
 
 #[naked]
@@ -157,49 +159,6 @@ pub unsafe extern "C" fn core_main(smpinfo: &limine::SmpInfo) -> ! {
     lsd::HART_ID.store(smpinfo.hartid, core::sync::atomic::Ordering::Relaxed);
 
     CORE_INIT.claimed.store(true, core::sync::atomic::Ordering::Relaxed);
-
-    /*Trap on hart 0: TrapFrame {
-        sepc: 0xfffffffa80000568,
-        registers: GeneralRegisters {
-            ra: 0xfffffffa800001d0,
-            sp: 0xfffffffa80149f60,
-            gp: 0xfffffffa8000dea8,
-            tp: 0xffff800080339000,
-            t0: 0xdf,
-            t1: 0xffffffff90000000,
-            t2: 0xfffffffa8000e018,
-            s0: 0xfffffffa80012030,
-            s1: 0xfffffffa80012030,
-            a0: 0x0,
-            a1: 0x0,
-            a2: 0x0,
-            a3: 0xffff8000800a9000,
-            a4: 0x80,
-            a5: 0xffff8000800a9000,
-            a6: 0x1000,
-            a7: 0xf0,
-            s2: 0xffff80008002a000,
-            s3: 0xff,
-            s4: 0x1,
-            s5: 0xfffffffa8000d14e,
-            s6: 0xffff80017fe5b000,
-            s7: 0xffff80017fe5c010,
-            s8: 0x80025000,
-            s9: 0xffff80017fe5c008,
-            s10: 0xfffffffa8000e000,
-            s11: 0xff,
-            t3: 0x0,
-            t4: 0xfffffffa800098c2,
-            t5: 0x25,
-            t6: 0xffffffffffffff8f,
-        },
-    }
-    Cause: StorePageFault
-    Stval: 0x0
-    fffffffa80000560: 03 39 84 00   ld      s2, 8(s0)
-    fffffffa80000564: 03 35 89 00   ld      a0, 8(s2)
-    fffffffa80000568: 23 30 05 00   sd      zero, 0(a0)
-    */
 
     loop {
         core::arch::riscv64::pause();

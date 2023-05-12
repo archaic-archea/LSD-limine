@@ -55,19 +55,22 @@ impl Entropy {
             next: super::splitqueue::SplitqueueIndex::new(0),
         };
 
-        println!("{:#x?}", desc);
-
         unsafe {
+            println!("Zeroing dma entry");
             for entry in (*dma).iter_mut() {
                 *entry = 0; 
             }
 
+            println!("Allocating descriptor");
             let index = self.req.alloc_descriptor().unwrap();
+            println!("Writing descriptor");
             self.req.descriptors.write(index, desc);
 
+            println!("Pushing available");
             let index = super::splitqueue::SplitqueueIndex::new(0);
             self.req.available.push(index);
 
+            println!("Notifying");
             (*self.header).queue_notify.notify(0);
         }
     }

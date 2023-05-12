@@ -26,6 +26,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
     }
 
     pub fn alloc(&self, size: usize, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
+        let flags = flags | PageFlags::VALID;
         let section = self.0.alloc(size, strategy)?;
 
         let mut return_val = (0, None);
@@ -98,13 +99,14 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-            super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
+            super::pmm::REGION_LIST.lock().push_org(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
         }
     }
     
     pub fn alloc_constrained(&self, layout: vmem::Layout, strategy: vmem::AllocStrategy, physically_contiguous: bool, flags: PageFlags) -> Result<(usize, Option<PhysicalAddress>), vmem::Error> {
+        let flags = flags | PageFlags::VALID;
         let section = self.0.alloc_constrained(layout, strategy)?;
         let size = layout.size();
 
@@ -173,7 +175,7 @@ impl<'a, 'b> Vmm <'a, 'b> {
 
             let phys = unmap(current_table().cast_mut(), virt, level, PageLevel::Level1).0 + super::HHDM_OFFSET.load(Ordering::Relaxed);
 
-            super::pmm::REGION_LIST.lock().pull(phys as *mut u8);
+            super::pmm::REGION_LIST.lock().push_org(phys as *mut u8);
 
             flush_tlb(Some(virt), None);
         }
@@ -254,7 +256,7 @@ pub unsafe fn init() {
     }
 
     unsafe {
-        clone_table_range(&*current_table(), &mut *root_table_claim, 256..512);
+        clone_table_range(current_table(), root_table_claim, 256..512);
     }
 
     let mut reg_list_lock = super::pmm::REGION_LIST.lock();
@@ -310,7 +312,7 @@ pub unsafe fn init() {
     println!("Virtual memory initialized");
 }
 
-/// FIXME: Somehow mutates source table when using for SMP
+/// FIXME: Somehow mutates source table sometimes
 /// # Safety
 /// Only run on an unloaded table
 pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
@@ -386,15 +388,11 @@ pub unsafe fn unmap(
                 panic!("Unexpected entry");
             } else if entry.is_branch() {
                 //println!("Table at index {} of table {:?}", table_index, table);
-                let next_table_phys = entry.get_ppn() << 12;
-                let next_table = next_table_phys + super::HHDM_OFFSET.load(Ordering::Relaxed);
-
-                //let tmp = table;
-                table = next_table as *mut PageTable;
+                table = entry.table().cast_mut();
 
                 //println!("Entry accessed: 0x{:x}", (*tmp).0[table_index as usize].0);
             } else {
-                panic!("No entry found for virt 0x{:x}\ntable {:?}\ndump: {:#?}\nentry 0x{:x}", virt.0, table, *table, (*table).0[table_index as usize].0);
+                panic!("No entry found for virt 0x{:x}\ntable {:?}\ndump: {:#?}\nentry 0x{:x}\nDepth: {:?}", virt.0, table, *table, (*table).0[table_index as usize].0, level);
             }
 
             level = PageLevel::from_usize(level.as_usize() - 1);
@@ -419,10 +417,11 @@ pub unsafe fn map(
 
     loop {
         let table_index = virt.index(level);
+        let table_index = table_index as usize;
 
         if level == target_level {
             let mut table_copy = table.read_volatile();
-            let entry = &mut table_copy.0[table_index as usize];
+            let entry = &mut table_copy.0[table_index];
 
             //println!("Made leaf at index {} of table {:?}", table_index, table);
             entry.0 = 0;
@@ -435,15 +434,15 @@ pub unsafe fn map(
             return;
         } else {
             let mut table_copy = table.read_volatile();
-            let entry = table_copy.0[table_index as usize];
+            let entry = table_copy.0[table_index];
 
             if entry.is_branch() {
                 //println!("Found table at index {} of table {:?}", table_index, table);
-                table = ((entry.get_ppn() << 12) + super::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)) as *mut PageTable;
+                table = entry.table().cast_mut();
             } else if entry.is_leaf() {
                 panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
             } else if !entry.get_valid() {
-                let entry = &mut table_copy.0[table_index as usize];
+                let entry = &mut table_copy.0[table_index];
 
                 //println!("Made table at index {} of table {:?}", table_index, table);
                 let new_table = pmm_lock.claim() as *mut PageTable;
@@ -610,6 +609,7 @@ impl core::fmt::Debug for PageTable {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct PageFlags: u64 {
+        const VALID =   0b000001;
         const READ =    0b000010;
         const WRITE =   0b000100;
         const EXECUTE = 0b001000;

@@ -91,7 +91,7 @@ impl FreeList {
     /// Appends a new entry to the start of the list
     /// # Safety
     /// Only call on memory that is being unused, and wont be used later(unless calling `claim`)
-    pub unsafe fn pull(&mut self, new: *mut u8) {
+    unsafe fn pull(&mut self, new: *mut u8) {
         let new = new as *mut FreeListEntry;
 
         // Check that the new entry isn't in page 0, and is aligned
@@ -134,6 +134,47 @@ impl FreeList {
         self.len -= 1;
         
         og_head as *mut u8
+    }
+
+    /// Adds an entry to the list, but ensures its organized
+    /// # Safety
+    /// Only safe if an entry is not being used
+    /// 
+    /// # Panics
+    /// Will panic if the address isnt aligned
+    /// Will panic if the address exists
+    pub unsafe fn push_org(&mut self, base: *mut u8) {
+        assert!((base as *mut FreeListEntry).is_aligned(), "Pushed address is not aligned");
+
+        let base_int = base as u64;
+        let mut current_entry: *mut FreeListEntry = self.head;
+        
+        while base_int > current_entry as u64 {
+            if current_entry.is_null() {
+                self.push(base);
+            }
+
+            current_entry = (*current_entry).next;
+        }
+
+        // now current entry will be at an address greater than, or equal to the base address
+        assert_eq!((current_entry as u64), base_int, "Address exists in free list");
+
+        let base = base as *mut FreeListEntry;
+        let prev = current_entry;
+        let next = (*current_entry).next;
+
+        if !prev.is_null() {
+            (*prev).next = base;
+        }
+        if !next.is_null() {
+            (*next).prev = base;
+        }
+
+        *base = FreeListEntry::null();
+
+        (*base).prev = prev;
+        (*base).next = next;
     }
 
     /// Guaranteed to return a physically continuous section of memory

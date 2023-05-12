@@ -3,9 +3,15 @@
 // 
 // [1][0]                      = forfeit task control       -> no return
 // [1][1][size]                = extend heap                -> [ptr]
-// [1][2]                      = spawn thread               -> [task_id][thread_id]
-// [1][3]                      = drop current thread        -> no return
+// [1][2]                      = spawn thread               -> 
+//      new thread: [task_id][thread_id][1]
+//      old thread: [tash_id][spawned_thread_id][0]
+
+// [1][3][ptr_to_return]       = drop current thread        -> no return
 // [1][4]                      = End program                -> no return
+// [1][5][0]                   = Current time               -> [current]
+// [1][5][target]              = Thread Sleep               -> no return
+// [1][6][task_id][?thread_id] = Await end of Thread/Task   -> [ptr_to_return]
 
 use alloc::vec::Vec;
 use spin::Mutex;
@@ -111,12 +117,18 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
             let mut read = crate::traps::task::CURRENT_USER_TASK.write();
 
             let cur_task = read.current_task_mut();
-            trap_frame.a0 = 0;
+            trap_frame.a2 = 0;
 
             let mut task_clone = *cur_task;
             task_clone.thread_id = task_clone.thread_manager.alloc(1, vmem::AllocStrategy::NextFit).unwrap();
+            task_clone.trap_frame.a2 = 1;
             task_clone.trap_frame.a0 = task_clone.task_id;
             task_clone.trap_frame.a1 = task_clone.thread_id;
+
+            cur_task.trap_frame.a0 = cur_task.task_id;
+            cur_task.trap_frame.a1 = task_clone.thread_id;
+
+            println!("new thread: 0x{:x} 0x{:x}", cur_task.task_id, task_clone.thread_id);
 
             core::mem::drop(read);
             crate::traps::task::new_task(task_clone);
@@ -150,6 +162,32 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
                 }
             }
         },
+        5 => {
+            if trap_frame.a2 == 0 {
+                let rtc = unsafe {(**crate::drivers::goldfish_rtc::RTC.get()).time.read()};
+
+                trap_frame.a0 = rtc as usize;
+            } else {
+                let mut write = crate::traps::task::CURRENT_USER_TASK.write();
+                let current = write.current_task_mut();
+
+                current.waiting_on = crate::traps::task::WaitSrc::Time(trap_frame.a2 as u64);
+                core::mem::drop(write);
+
+                crate::traps::task::advance_task(trap_frame);
+            }
+        },
+        6 => {
+            crate::traps::task::update_current(trap_frame);
+            let mut write = crate::traps::task::CURRENT_USER_TASK.write();
+
+            let thread_id = core::num::NonZeroUsize::new(trap_frame.a3);
+
+            let cur_task = write.current_task_mut();
+            cur_task.waiting_on = crate::traps::task::WaitSrc::TaskEnd(trap_frame.a2, thread_id);
+
+            core::mem::drop(write);
+        }
         subcall => panic!("Unrecognized task subcall 0x{:x} trapframe: \n{:#x?}", subcall, trap_frame)
     }
 }

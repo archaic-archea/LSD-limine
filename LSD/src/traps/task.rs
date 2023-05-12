@@ -56,10 +56,10 @@ pub fn full_drop_task(task_index: usize) {
 #[derive(Debug, Clone, Copy)]
 #[repr(u64)]
 pub enum Privilege {
-    Root,
-    SuperUser,
-    User,
-    Guest
+    Root        = 0xffff_ffff,
+    SuperUser   = 0xffff,
+    User        = 0xff,
+    Guest       = 0xf
 }
 
 #[derive(Clone, Copy)]
@@ -149,7 +149,6 @@ impl TaskQueue {
 
     pub fn advance(&mut self) {
         let start = self.cur_task_idx;
-        let mut sie_set = false;
 
         loop {
             self.cur_task_idx += 1;
@@ -158,24 +157,40 @@ impl TaskQueue {
             }
 
             if self.current_task().waiting_on == WaitSrc::None {
-                if sie_set {
-                    let mut sstatus = crate::arch::regs::Sstatus::new();
-                    sstatus.set_sie(false);
-                    sstatus.set_spp(false);
-
-                    unsafe {sstatus.set()}
-                }
-
                 break;
+            } else if let WaitSrc::Time(ts) = self.current_task().waiting_on {
+                let rtc = unsafe {(**crate::drivers::goldfish_rtc::RTC.get()).time.read()};
+
+                if ts <= rtc {
+                    self.current_task_mut().waiting_on = WaitSrc::None;
+                    break;
+                }
+            } else if let WaitSrc::TaskEnd(task_id, thread_id_opt) = self.current_task().waiting_on {
+                let task_found = match thread_id_opt {
+                    Some(thread_id) => {
+                        let task = self.queue.iter().find(|task| {
+                            (task.task_id == task_id) && (task.thread_id == thread_id.get())
+                        });
+
+                        task.is_some()
+                    },
+                    None => {
+                        let task = self.queue.iter().find(|task| {
+                            task.task_id == task_id
+                        });
+
+                        task.is_some()
+                    }
+                };
+
+                if !task_found {
+                    self.current_task_mut().waiting_on = WaitSrc::None;
+                    break;
+                }
             }
 
             if self.cur_task_idx == start {
-                let mut sstatus = crate::arch::regs::Sstatus::new();
-                sstatus.set_sie(true);
-                sstatus.set_spp(true);
-                unsafe {sstatus.set()}
-
-                sie_set = true;
+                panic!("No task available");
             }
         }
     }
@@ -205,5 +220,19 @@ impl TaskQueue {
 pub enum WaitSrc {
     None,
     CharIn,
-    Breakpoint
+    Breakpoint,
+    /// Waiting on a certain time stamp to be reached
+    Time(u64),
+
+    /// Waiting on a task/thread to end
+    TaskEnd(usize, Option<core::num::NonZeroUsize>)
+}
+
+impl core::fmt::Debug for TaskData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "Task id: 0x{:x}", self.task_id)?;
+        writeln!(f, "Thread id: 0x{:x}", self.thread_id)?;
+
+        Ok(())
+    }
 }

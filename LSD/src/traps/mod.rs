@@ -337,6 +337,7 @@ pub extern "C" fn trap_handler(regs: &mut TrapFrame, scause: usize, stval: usize
             let cur_task = reader.current_task_mut();
             cur_task.waiting_on = task::WaitSrc::Breakpoint;
 
+            println!("Breakpoint on task 0x{:x} thread 0x{:x} trapframe: {:#?}", cur_task.task_id, cur_task.thread_id, regs);
             core::mem::drop(reader);
 
             task::advance_task(regs);
