@@ -6,5 +6,6 @@
         "./lsd_lib/Cargo.toml",
         "./null_task/Cargo.toml",
         "./xtask/Cargo.toml",
+        "./lsd_lib/Cargo.toml"
     ]
 }
