@@ -51,6 +51,9 @@ SECTIONS {
         . += 0x800000;
         . = ALIGN(128);
         PROVIDE(__stack_top = .);
+        . += 0x800000;
+        . = ALIGN(128);
+        PROVIDE(__stack2_top = .);
     }
 
     PROVIDE(__image_end = .);
