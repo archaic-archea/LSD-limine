@@ -3,7 +3,7 @@
 
 pub mod time;
 pub mod raw_calls;
-pub mod thread;
+//pub mod thread;
 
 struct RootPrinter;
 

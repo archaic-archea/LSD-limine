@@ -11,43 +11,10 @@ use std::println;
 pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
 
-    std::thread::spawn_thread(on_thread);
+    let extend = std::raw_calls::extend_heap(0x1000);
 
-    println!("Task root running");
+    println!("Extended heap location: {:?}", extend);
     loop {}
-}
-
-fn on_thread(task_id: usize, thread_id: usize) {
-    println!("Task 0x{:x}: thread 0x{:x} running", task_id, thread_id);
-}
-
-#[naked]
-#[no_mangle]
-unsafe extern "C" fn new_thread() {
-    core::arch::asm!(
-        "
-            li a0, 1
-            li a1, 2
-            ecall
-
-            beqz a2, 1f
-            lla sp, __stack2_top
-
-            j {}
-
-            1:
-                mv a1, a3
-                mv a0, a2
-
-                li a0, 1
-                li a1, 6
-                li a2, 2
-                li a3, 2
-                ecall
-
-                ret
-        ", sym on_thread, options(noreturn)
-    );
 }
 
 #[naked]

@@ -365,8 +365,7 @@ pub unsafe fn unmap(
         let table_index = virt.index(level);
 
         if level == target_level {
-            let mut table_copy = table.read_volatile();
-            let entry = &mut table_copy.0[table_index as usize];
+            let entry = &mut (*table).0[table_index as usize];
 
             if !entry.is_leaf() {
                 panic!("No leaf found while unmapping");
@@ -378,7 +377,6 @@ pub unsafe fn unmap(
 
             //println!("Old table dump: \n{:?}", table.read_volatile());
             //println!("New table dump: \n{:?}", table_copy);
-            table.write_volatile(table_copy);
 
             return PhysicalAddress(return_addr);
         } else {
@@ -420,8 +418,7 @@ pub unsafe fn map(
         let table_index = table_index as usize;
 
         if level == target_level {
-            let mut table_copy = table.read_volatile();
-            let entry = &mut table_copy.0[table_index];
+            let entry = &mut (*table).0[table_index];
 
             //println!("Made leaf at index {} of table {:?}", table_index, table);
             entry.0 = 0;
@@ -429,12 +426,10 @@ pub unsafe fn map(
             entry.set_ppn(phys.get_ppn());
             entry.0 |= flags.bits();
             entry.set_valid(true);
-
-            table.write_volatile(table_copy);
+            
             return;
         } else {
-            let mut table_copy = table.read_volatile();
-            let entry = table_copy.0[table_index];
+            let entry = &(*table).0[table_index];
 
             if entry.is_branch() {
                 //println!("Found table at index {} of table {:?}", table_index, table);
@@ -442,7 +437,7 @@ pub unsafe fn map(
             } else if entry.is_leaf() {
                 panic!("Didnt expect leaf at index {} of table {:?}", table_index, table);
             } else if !entry.get_valid() {
-                let entry = &mut table_copy.0[table_index];
+                let entry = &mut (*table).0[table_index];
 
                 //println!("Made table at index {} of table {:?}", table_index, table);
                 let new_table = pmm_lock.claim() as *mut PageTable;
@@ -454,8 +449,6 @@ pub unsafe fn map(
 
                 entry.set_ppn(new_table_phys >> 12);
                 entry.set_valid(true);
-
-                table.write_volatile(table_copy);
 
                 table = new_table;
             }
