@@ -300,7 +300,7 @@ bitflags::bitflags! {
         /// Page based memory type extension
         const SVPBMT =      0b1000000000000000000;
         
-        /// TODO: Figure out meaning
+        /// Hypervisor Extension
         const H =           0b10000000000000000000;
     }
 }
@@ -383,7 +383,7 @@ impl core::fmt::Debug for CpuData {
             writeln!(f, "Single precision floating point extension")?;
         }
         if self.contains(CpuData::H) {
-            writeln!(f, "Unknown extension: 'H'")?;
+            writeln!(f, "Hypervisor extension")?;
         }
         if self.contains(CpuData::D) {
             writeln!(f, "Double precision floating point extension")?;
