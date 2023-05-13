@@ -158,7 +158,7 @@ impl FreeList {
         }
 
         // now current entry will be at an address greater than, or equal to the base address
-        assert_eq!((current_entry as u64), base_int, "Address exists in free list");
+        assert_ne!((current_entry as u64), base_int, "Address exists in free list");
 
         let base = base as *mut FreeListEntry;
         let prev = current_entry;
