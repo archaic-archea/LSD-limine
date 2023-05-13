@@ -190,7 +190,7 @@ pub fn new_with_upperhalf() -> *mut PageTable {
     let new_table = pmm::REGION_LIST.lock().claim() as *mut PageTable;
 
     unsafe {
-        clone_table_range(current_table(), new_table, 256..512);
+        copy_table_range(current_table(), new_table, 256..512);
     }
 
     new_table
@@ -255,14 +255,16 @@ pub unsafe fn init() {
         entry.0 = 0;
     }
 
+    let limine_table = current_table();
+
     unsafe {
         clone_table_range(current_table(), root_table_claim, 256..512);
     }
 
-    let mut reg_list_lock = super::pmm::REGION_LIST.lock();
-
     println!("Mapping IO");
     for i in (0..0x8000_0000_u64).step_by(PageSize::Large as usize) {
+        let mut reg_list_lock = super::pmm::REGION_LIST.lock();
+        
         let virt = VirtualAddress::new(0xffffffff80000000).add(i);
         let phys = PhysicalAddress::new(0x00).add(i);
 
@@ -309,10 +311,28 @@ pub unsafe fn init() {
     }
     crate::uart::UART.lock().0 = 0xffffffff90000000 as *mut crate::uart::Uart16550;
 
-    println!("Virtual memory initialized");
+    println!("Virtual memory initialized, dropping limine's table");
+    (*limine_table.cast_mut()).destroy_completely();
+}
+
+/// Directly copies entries
+/// # Safety
+/// Only run on an unloaded table
+pub unsafe fn copy_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
+    for index in range {
+        let src_entry = (src as *const PageEntry).add(index);
+        let dest_entry = (dest as *mut PageEntry).add(index);
+
+        if (*src_entry).get_valid() {
+            *dest_entry = *src_entry;
+        } else {
+            *dest_entry = PageEntry(0);
+        }
+    }
 }
 
 /// FIXME: Somehow mutates source table sometimes
+/// Creates new subtables, otherwise the same as `copy_table_range`
 /// # Safety
 /// Only run on an unloaded table
 pub unsafe fn clone_table_range(src: *const PageTable, dest: *mut PageTable, range: core::ops::Range<usize>) {
@@ -583,6 +603,30 @@ impl ops::Add<usize> for PageLevel {
 
 #[repr(transparent)]
 pub struct PageTable(pub [PageEntry; 512]);
+
+impl PageTable {
+    /// Returns all non-leaf entries to the pmm
+    /// # Safety
+    /// Only use on an unloaded table
+    /// Only use on tables that DONT reference the upperhalf entries
+    pub unsafe fn destroy_completely(&mut self) {
+        for entry in self.0.iter_mut() {
+            if entry.is_branch() {
+                (*entry.table().cast_mut()).destroy_completely()
+            }
+        }
+
+        let mut lock = pmm::REGION_LIST.lock();
+        lock.push_org(core::ptr::addr_of_mut!(*self).cast());
+    }
+}
+
+impl Drop for PageTable {
+    /// Never let us drop a table just from going out of scope
+    fn drop(&mut self) {
+        panic!("DROPPING TABLE");
+    }
+}
 
 impl core::fmt::Debug for PageTable {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
