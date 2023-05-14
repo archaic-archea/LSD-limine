@@ -156,8 +156,6 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
             cur_task.trap_frame.a0 = cur_task.task_id;
             cur_task.trap_frame.a1 = task_clone.thread_id;
 
-            println!("new thread: 0x{:x} 0x{:x}", cur_task.task_id, task_clone.thread_id);
-
             core::mem::drop(read);
             crate::traps::task::new_task(task_clone);
         },
