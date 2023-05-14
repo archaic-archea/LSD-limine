@@ -19,7 +19,7 @@ pub unsafe fn init_task_queues() {
         );
 
         task_queue.write().new_task(
-            load(crate::NULL_TASK, crate::traps::task::Privilege::Guest)
+            load(crate::NULL_TASK, crate::traps::task::Privilege::Guest, 0x0)
         );
         
         task_queue
@@ -44,7 +44,7 @@ pub fn start_tasks() {
     }
 }
 
-pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> crate::traps::task::TaskData {
+pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege, stack_size: usize) -> crate::traps::task::TaskData {
     use crate::memory::{pmm, vmm, self};
 
     let elfbytes = elf::ElfBytes::<elf::endian::LittleEndian>::minimal_parse(bytes).unwrap();
@@ -120,69 +120,110 @@ pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> crate::tr
         }
     }
 
-    let stack = pmm::REGION_LIST.lock().claim_aligned(0x800, vmm::PageSize::Medium).unwrap();
-    let stack_paddr = (stack as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-    let stack_vaddr = task_vmm.alloc(0x80_0001, vmem::AllocStrategy::NextFit).unwrap() as u64;
+    if stack_size != 0 {
+        let stack = pmm::REGION_LIST.lock().claim_aligned_contiguous(stack_size / 0x1000, vmm::PageSize::Medium).unwrap();
+        let stack_paddr = (stack as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+        let stack_vaddr = task_vmm.alloc(stack_size + 1, vmem::AllocStrategy::NextFit).unwrap() as u64;
 
-    for i in (0..0x80_0000).step_by(vmm::PageSize::Medium as usize) {
-        let flags = vmm::PageFlags::READ | vmm::PageFlags::WRITE | vmm::PageFlags::USER;
+        for i in (0..(stack_size as u64) + 1).step_by(vmm::PageSize::Medium as usize) {
+            let flags = vmm::PageFlags::READ | vmm::PageFlags::WRITE | vmm::PageFlags::USER;
 
-        let virt = memory::VirtualAddress(stack_vaddr + i);
-        let phys = memory::PhysicalAddress(stack_paddr + i);
-        unsafe {
-            vmm::map(
-                new_table, 
-                virt, 
-                phys, 
-                level, 
-                vmm::PageLevel::Level2, 
-                &mut pmm::REGION_LIST.lock(), 
-                flags
-            )
+            let virt = memory::VirtualAddress(stack_vaddr + i);
+            let phys = memory::PhysicalAddress(stack_paddr + i);
+            unsafe {
+                vmm::map(
+                    new_table, 
+                    virt, 
+                    phys, 
+                    level, 
+                    vmm::PageLevel::Level2, 
+                    &mut pmm::REGION_LIST.lock(), 
+                    flags
+                )
+            }
         }
+
+        use crate::traps::{self, task};
+
+        let phys = (new_table as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+
+        let mut task_table = vmm::Satp::new();
+        task_table.set_asid(0);
+        task_table.set_mode(vmm::PageType::from_levels(level) as u64);
+        task_table.set_ppn(phys >> 12);
+        
+        let boxed_vmm = alloc::boxed::Box::new(task_vmm);
+        let leaked_vmm = alloc::boxed::Box::leak(boxed_vmm);
+
+        let task_tm = vmem::Vmem::new(
+            alloc::borrow::Cow::Borrowed("task_thread_manager"), 
+            1, 
+            None
+        );
+
+        task_tm.add(1, usize::MAX - 1).unwrap();
+
+        let boxed_tm = alloc::boxed::Box::new(task_tm);
+        let leaked_tm = alloc::boxed::Box::leak(boxed_tm);
+
+        let mut task_data = task::TaskData {
+            trap_frame: traps::TrapFrame::default(),
+            task_id,
+            task_table,
+            privilege,
+            waiting_on: task::WaitSrc::None,
+            thread_id: leaked_tm.alloc(1, vmem::AllocStrategy::NextFit).unwrap(),
+            thread_manager: leaked_tm,
+            vmm: leaked_vmm
+        };
+
+        task_data.trap_frame.sp = (stack_vaddr as usize) + stack_size;
+        println!("Loading program with stack at {:?}", task_data.trap_frame.sp());
+
+        task_data.trap_frame.sepc = elfbytes.ehdr.e_entry as usize;
+        task_data.trap_frame.a0 = task_id;
+        
+        task_data
+    } else {
+        use crate::traps::{self, task};
+
+        let phys = (new_table as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+
+        let mut task_table = vmm::Satp::new();
+        task_table.set_asid(0);
+        task_table.set_mode(vmm::PageType::from_levels(level) as u64);
+        task_table.set_ppn(phys >> 12);
+        
+        let boxed_vmm = alloc::boxed::Box::new(task_vmm);
+        let leaked_vmm = alloc::boxed::Box::leak(boxed_vmm);
+
+        let task_tm = vmem::Vmem::new(
+            alloc::borrow::Cow::Borrowed("task_thread_manager"), 
+            1, 
+            None
+        );
+
+        task_tm.add(1, usize::MAX - 1).unwrap();
+
+        let boxed_tm = alloc::boxed::Box::new(task_tm);
+        let leaked_tm = alloc::boxed::Box::leak(boxed_tm);
+
+        let mut task_data = task::TaskData {
+            trap_frame: traps::TrapFrame::default(),
+            task_id,
+            task_table,
+            privilege,
+            waiting_on: task::WaitSrc::None,
+            thread_id: leaked_tm.alloc(1, vmem::AllocStrategy::NextFit).unwrap(),
+            thread_manager: leaked_tm,
+            vmm: leaked_vmm
+        };
+
+        task_data.trap_frame.sepc = elfbytes.ehdr.e_entry as usize;
+        task_data.trap_frame.a0 = task_id;
+        
+        task_data
     }
-
-    use crate::traps::{self, task};
-
-    let phys = (new_table as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-
-    let mut task_table = vmm::Satp::new();
-    task_table.set_asid(0);
-    task_table.set_mode(vmm::PageType::from_levels(level) as u64);
-    task_table.set_ppn(phys >> 12);
-    
-    let boxed_vmm = alloc::boxed::Box::new(task_vmm);
-    let leaked_vmm = alloc::boxed::Box::leak(boxed_vmm);
-
-    let task_tm = vmem::Vmem::new(
-        alloc::borrow::Cow::Borrowed("task_thread_manager"), 
-        1, 
-        None
-    );
-
-    task_tm.add(1, usize::MAX - 1).unwrap();
-
-    let boxed_tm = alloc::boxed::Box::new(task_tm);
-    let leaked_tm = alloc::boxed::Box::leak(boxed_tm);
-
-    let mut task_data = task::TaskData {
-        trap_frame: traps::TrapFrame::default(),
-        task_id,
-        task_table,
-        privilege,
-        waiting_on: task::WaitSrc::None,
-        thread_id: leaked_tm.alloc(1, vmem::AllocStrategy::NextFit).unwrap(),
-        thread_manager: leaked_tm,
-        vmm: leaked_vmm
-    };
-
-    task_data.trap_frame.sp = (stack_vaddr + 0x80_0000) as usize;
-    println!("Loading program with stack at {:?}", task_data.trap_frame.sp());
-
-    task_data.trap_frame.sepc = elfbytes.ehdr.e_entry as usize;
-    task_data.trap_frame.a0 = task_id;
-    
-    task_data
 }
 
 bitflags::bitflags! {

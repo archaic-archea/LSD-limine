@@ -98,7 +98,12 @@ pub fn full_drop_task(_index: usize) {
     for (index, task) in lock.queue.iter().rev().enumerate() {
         let table_addr = (task.task_table.get_ppn() << 12) + crate::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
         let table = table_addr as *mut crate::memory::vmm::PageTable;
-        unsafe {(*table).destroy_completely()}
+        if task.thread_id == 1 {
+            let level = crate::memory::vmm::LEVELS.load(Ordering::Relaxed);
+            let level = crate::memory::vmm::PageLevel::from_usize(level as usize);
+
+            unsafe {(*table).destroy_all_completely(level)}
+        }
 
         indexes.push(index);
     }

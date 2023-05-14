@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
                     -machine virt
                     -cpu rv64,svpbmt=on
                     -smp 2
-                    -m 2G
+                    -m 8G
                     -bios opensbi-riscv64-generic-fw_jump.bin
                     -kernel config/spark-riscv-sbi-release.bin
                     -global virtio-mmio.force-legacy=false

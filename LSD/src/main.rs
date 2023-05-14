@@ -56,7 +56,7 @@ extern "C" fn kmain() -> ! {
     use lsd::traps::task::Privilege;
 
     unsafe {lsd::userspace::init_task_queues()};
-    let task = lsd::userspace::load(lsd::USER_PROG, Privilege::Root);
+    let task = lsd::userspace::load(lsd::USER_PROG, Privilege::Root, 0x80_0000);
     println!("Loaded user program task with id 0x{:x}", task.task_id);
     lsd::traps::task::new_task(task);
     lsd::timing::Unit::MilliSeconds(10).set().unwrap();

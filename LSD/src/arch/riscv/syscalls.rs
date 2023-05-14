@@ -135,7 +135,7 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
             let level = vmm::PageLevel::from_usize(vmm::LEVELS.load(core::sync::atomic::Ordering::Relaxed) as usize);
             let table = (task_clone.task_table.get_ppn() << 12) + memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
 
-            let stack = pmm::REGION_LIST.lock().claim_aligned(0x800, vmm::PageSize::Medium).unwrap();
+            let stack = pmm::REGION_LIST.lock().claim_aligned_contiguous(0x800, vmm::PageSize::Medium).unwrap();
             let stack_paddr = (stack as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
             let stack_vaddr = task_clone.vmm.alloc(0x80_0001, vmem::AllocStrategy::NextFit).unwrap() as u64;
         

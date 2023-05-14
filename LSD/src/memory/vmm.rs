@@ -619,6 +619,32 @@ impl PageTable {
         let mut lock = pmm::REGION_LIST.lock();
         lock.push_org(core::ptr::addr_of_mut!(*self).cast());
     }
+
+    /// Returns ALL entries to pmm
+    /// # Safety
+    /// Only use just before switching to the next task, and assuming all tasks using this table, have been ended
+    pub unsafe fn destroy_all_completely(&mut self, depth: PageLevel) {
+        for entry in self.0.iter_mut() {
+            if entry.is_branch() {
+                (*entry.table().cast_mut()).destroy_all_completely(depth - 1)
+            } else if entry.is_leaf() {
+                let phys = entry.get_ppn() << 12;
+                let hhdm_addr = (phys + super::HHDM_OFFSET.load(Ordering::Relaxed)) as *mut [u8; 4096];
+
+                entry.0 = 0;
+
+                let size = depth.as_page_size() as usize;
+                for page in (0..size).step_by(4096) {
+                    *hhdm_addr.byte_add(page) = [0; 4096];
+
+                    super::pmm::REGION_LIST.lock().push_org(hhdm_addr.byte_add(page).cast());
+                }
+            }
+        }
+
+        let mut lock = pmm::REGION_LIST.lock();
+        lock.push_org(core::ptr::addr_of_mut!(*self).cast());
+    }
 }
 
 impl Drop for PageTable {

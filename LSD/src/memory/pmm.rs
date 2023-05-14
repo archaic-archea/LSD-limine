@@ -5,6 +5,8 @@
 // v. 2.0. If a copy of the MPL was not distributed with this file, You can
 // obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::str::FromStr;
+
 use spin::Mutex;
 
 use crate::println;
@@ -227,10 +229,14 @@ impl FreeList {
         Err(alloc::format!("Couldnt find contiguous frames out of {} frames", self.len))
     }
 
-    pub fn claim_aligned(&mut self, frames: usize, align: super::vmm::PageSize) -> Result<*mut u8, alloc::string::String> {
+    /// If you request 1 frame, it will not be guaranteed to be aligned
+    pub fn claim_aligned_contiguous(&mut self, frames: usize, align: super::vmm::PageSize) -> Result<*mut u8, alloc::string::String> {
         if frames == 1 {
             return Ok(self.claim());
+        } else if frames == 0 {
+            return Err(alloc::string::String::from_str("Cannot claim 0 frames").unwrap());
         }
+
         // Store the head as a current entry, as well as the base entry of this contigous section
         let mut base_entry = self.head;
         let mut current_entry = self.head;
@@ -276,7 +282,7 @@ impl FreeList {
         }
 
         // Return none if we couldnt find a contigous piece of memory large enough
-        Err(alloc::format!("Couldnt find contiguous frames out of {} frames", self.len))
+        Err(alloc::format!("Couldnt find {} contiguous frames out of {} frames", frames, self.len))
     }
 }
 
