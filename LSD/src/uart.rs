@@ -52,7 +52,8 @@ pub fn uart_handler(_: usize) {
 
     for entry_id in list.iter() {
         use crate::traps::task;
-        let mut lock = task::CURRENT_USER_TASK.write();
+        let task_queues = task::TASK_QUEUES.read();
+        let mut lock = task_queues[task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].write();
 
         let task = lock.find_task_mut(*entry_id).unwrap();
 

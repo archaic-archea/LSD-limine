@@ -5,17 +5,35 @@ use crate::println;
 pub static TASK_IDS: Mutex<vmem::Vmem> = Mutex::new(
     vmem::Vmem::new(
         alloc::borrow::Cow::Borrowed("TaskIDs"), 
-        2, 
+        1, 
         None
     )
 );
+
+/// # Safety
+/// Only call once per core
+pub unsafe fn init_task_queues() {
+    crate::traps::task::TASK_QUEUES.write().push({
+        let task_queue = spin::RwLock::new(
+            crate::traps::task::TaskQueue::new()
+        );
+
+        task_queue.write().new_task(
+            load(crate::NULL_TASK, crate::traps::task::Privilege::Guest)
+        );
+        
+        task_queue
+    });
+}
 
 pub fn init_task_ids() {
     TASK_IDS.lock().add(0, usize::MAX).unwrap();
 }
 
 pub fn start_tasks() {
-    let lock = crate::traps::task::CURRENT_USER_TASK.read();
+    crate::traps::task::TASK_LOCK_INDEX.store(0, core::sync::atomic::Ordering::Relaxed);
+    let task_queues = crate::traps::task::TASK_QUEUES.read();
+    let lock = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].read();
     let task = *lock.current_task();
 
     core::mem::drop(lock);
@@ -26,7 +44,7 @@ pub fn start_tasks() {
     }
 }
 
-pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> usize {
+pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> crate::traps::task::TaskData {
     use crate::memory::{pmm, vmm, self};
 
     let elfbytes = elf::ElfBytes::<elf::endian::LittleEndian>::minimal_parse(bytes).unwrap();
@@ -163,9 +181,8 @@ pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> usize {
 
     task_data.trap_frame.sepc = elfbytes.ehdr.e_entry as usize;
     task_data.trap_frame.a0 = task_id;
-
-    task::new_task(task_data);
-    task_id
+    
+    task_data
 }
 
 bitflags::bitflags! {

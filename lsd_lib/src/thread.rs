@@ -1,7 +1,5 @@
 use crate::raw_calls;
 
-extern crate alloc;
-
 pub struct JoinHandle<T> {
     task_id: usize,
     thread_id: usize,

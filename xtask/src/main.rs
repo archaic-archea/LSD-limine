@@ -56,8 +56,8 @@ fn main() -> anyhow::Result<()> {
                 qemu-system-riscv64
                     -machine virt
                     -cpu rv64,svpbmt=on
-                    -smp 1
-                    -m 512M
+                    -smp 2
+                    -m 2G
                     -bios opensbi-riscv64-generic-fw_jump.bin
                     -kernel config/spark-riscv-sbi-release.bin
                     -global virtio-mmio.force-legacy=false

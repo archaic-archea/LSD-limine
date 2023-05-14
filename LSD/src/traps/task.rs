@@ -1,17 +1,28 @@
+use core::sync::atomic::{Ordering, AtomicUsize};
+
 use alloc::vec::Vec;
 use spin::RwLock;
 
-pub static CURRENT_USER_TASK: RwLock<TaskQueue> = RwLock::new(TaskQueue::new());
+pub static TASK_QUEUES: RwLock<Vec<RwLock<TaskQueue>>> = RwLock::new(Vec::new());
+
+#[thread_local]
+pub static TASK_LOCK_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 pub fn update_current(frame: &mut super::TrapFrame) {
-    let mut lock = CURRENT_USER_TASK.write();
+    let task_queues = TASK_QUEUES.read();
+    let mut lock = task_queues[TASK_LOCK_INDEX.load(Ordering::Relaxed)].write();
 
     let current = lock.current_task_mut();
     current.trap_frame = *frame;
 }
 
 pub fn advance_task(frame: &mut super::TrapFrame) {
-    let mut lock = CURRENT_USER_TASK.write();
+    let task_queues = TASK_QUEUES.read();
+    let mut lock = task_queues[TASK_LOCK_INDEX.load(Ordering::Relaxed)].write();
+
+    if lock.cur_task_idx >= lock.queue.len() {
+        lock.cur_task_idx = 0;
+    }
 
     let current = lock.current_task_mut();
 
@@ -33,12 +44,35 @@ pub fn advance_task(frame: &mut super::TrapFrame) {
     *frame = new_task.trap_frame;
 }
 
+pub fn new_universal_task(task_data: TaskData) {
+    let lock = TASK_QUEUES.read();
+
+    for queue in lock.iter() {
+        let mut write = queue.write();
+
+        write.new_task(task_data);
+    }
+}
+
 pub fn new_task(task_data: TaskData) {
-    CURRENT_USER_TASK.write().new_task(task_data);
+    let lock = TASK_QUEUES.read();
+    
+    let mut lowest_idx = usize::MAX;
+
+    for (index, queue) in lock.iter().enumerate() {
+        let read = queue.read();
+
+        if read.queue.len() < lowest_idx {
+            lowest_idx = index;
+        }
+    }
+
+    lock[lowest_idx].write().new_task(task_data);
 }
 
 pub fn drop_task(task_index: usize) {
-    let mut lock = CURRENT_USER_TASK.write();
+    let task_queues = TASK_QUEUES.read();
+    let mut lock = task_queues[TASK_LOCK_INDEX.load(Ordering::Relaxed)].write();
 
     if lock.cur_task_idx == task_index {
         lock.advance();
@@ -48,9 +82,30 @@ pub fn drop_task(task_index: usize) {
     lock.cur_task_idx -= 1;
 }
 
-pub fn full_drop_task(task_index: usize) {
-    // TODO: Properly drop tasks, release their memory
-    drop_task(task_index);
+pub fn full_drop_task(_index: usize) {
+    let task_queues = TASK_QUEUES.read();
+    let mut lock = task_queues[TASK_LOCK_INDEX.load(Ordering::Relaxed)].write();
+
+    let cur = lock.current_task();
+    let id = cur.task_id;
+    while lock.current_task().task_id == id {
+        lock.advance();
+    }
+
+    unsafe {lock.current_task().task_table.set()}
+    let mut indexes = alloc::vec::Vec::new();
+
+    for (index, task) in lock.queue.iter().rev().enumerate() {
+        let table_addr = (task.task_table.get_ppn() << 12) + crate::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+        let table = table_addr as *mut crate::memory::vmm::PageTable;
+        unsafe {(*table).destroy_completely()}
+
+        indexes.push(index);
+    }
+
+    for index in indexes.iter() {
+        lock.queue.swap_remove(*index);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

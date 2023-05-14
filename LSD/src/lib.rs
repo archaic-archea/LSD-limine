@@ -49,12 +49,18 @@ use core::sync::atomic::{self, AtomicPtr, AtomicBool};
 static LOWER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("kernel_lower_half");
 static HIGHER_HALF: memory::vmm::Vmm = memory::vmm::Vmm::new("higher_half");
 
+pub static USER_PROG: &[u8] = include_bytes!("../../LSD-Userspace/target/riscv64gc-unknown-none-elf/release/lsd_userspace");
+pub static NULL_TASK: &[u8] = include_bytes!("../../null_task/target/riscv64gc-unknown-none-elf/release/null_task");
+
 pub static CPU_DATA: SetOnce<CpuData> = SetOnce::new(CpuData::empty());
 pub static FDT_PTR: Mutex<usize> = Mutex::new(0);
 pub static KERN_PHYS: Mutex<usize> = Mutex::new(0);
 
+
 #[thread_local]
 pub static HART_ID: atomic::AtomicUsize = atomic::AtomicUsize::new(1);
+
+pub static LIMINE_TABLE: atomic::AtomicPtr<crate::memory::vmm::PageTable> = atomic::AtomicPtr::new(core::ptr::null_mut());
 
 pub const IO_OFFSET: u64 = 0xffffffff80000000;
 
@@ -71,10 +77,11 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
     memory::init_tls();
     HART_ID.store(hart_id, core::sync::atomic::Ordering::Relaxed);
     println!("Hart ID: {hart_id}");
-    memory::vmm::init();
+    let limine_table = memory::vmm::init();
     traps::init();
 
     unsafe {
+        LIMINE_TABLE.store(limine_table, atomic::Ordering::Relaxed);
         vmem::bootstrap()
     }
 

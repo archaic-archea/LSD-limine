@@ -215,7 +215,7 @@ pub fn flush_tlb(vaddr: Option<VirtualAddress>, asid: Option<u16>) {
 
 /// # Safety
 /// Must only be called once on the boot strap processor
-pub unsafe fn init() {
+pub unsafe fn init() -> *mut PageTable {
     let fdt_ptr = (*crate::FDT_PTR.lock()) as *const u8;
     let fdt = unsafe {fdt::Fdt::from_ptr(fdt_ptr).expect("Invalid FDT ptr")};
     let node = fdt.find_node("/cpus/cpu@0").unwrap();
@@ -255,7 +255,7 @@ pub unsafe fn init() {
         entry.0 = 0;
     }
 
-    let limine_table = current_table();
+    let limine_table = current_table().cast_mut();
 
     unsafe {
         clone_table_range(current_table(), root_table_claim, 256..512);
@@ -264,7 +264,7 @@ pub unsafe fn init() {
     println!("Mapping IO");
     for i in (0..0x8000_0000_u64).step_by(PageSize::Large as usize) {
         let mut reg_list_lock = super::pmm::REGION_LIST.lock();
-        
+
         let virt = VirtualAddress::new(0xffffffff80000000).add(i);
         let phys = PhysicalAddress::new(0x00).add(i);
 
@@ -312,7 +312,7 @@ pub unsafe fn init() {
     crate::uart::UART.lock().0 = 0xffffffff90000000 as *mut crate::uart::Uart16550;
 
     println!("Virtual memory initialized, dropping limine's table");
-    (*limine_table.cast_mut()).destroy_completely();
+    limine_table
 }
 
 /// Directly copies entries

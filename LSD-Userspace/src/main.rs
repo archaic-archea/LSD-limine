@@ -11,15 +11,7 @@ use std::println;
 pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
 
-    let join_handle = std::thread::spawn_thread(thread);
-    let join_handle = std::thread::spawn_thread(thread);
-    let join_handle = std::thread::spawn_thread(thread);
-    let _ = join_handle.join();
-}
-
-fn thread(task_id: usize, thread_id: usize) {
-    println!("New thread running task 0x{:x} thread 0x{:x}", task_id, thread_id);
-    loop {}
+    std::thread::spawn_thread(|_, _| {println!("Thread")});
 }
 
 #[naked]
@@ -41,6 +33,7 @@ unsafe extern "C" fn _entry() -> ! {
 }
 
 #[panic_handler]
-pub fn panic(_: &core::panic::PanicInfo) -> ! {
+pub fn panic(info: &core::panic::PanicInfo) -> ! {
+    println!("Panic occured {:#?}", info);
     loop {}
 }

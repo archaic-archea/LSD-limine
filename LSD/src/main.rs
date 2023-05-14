@@ -27,9 +27,6 @@ struct CoreInit {
 
 static mut CORE_INIT: CoreInit = CoreInit {sp: 0, satp: 0, claimed: core::sync::atomic::AtomicBool::new(false)};
 
-static USER_PROG: &[u8] = include_bytes!("../../LSD-Userspace/target/riscv64gc-unknown-none-elf/release/lsd_userspace");
-static NULL_TASK: &[u8] = include_bytes!("../../null_task/target/riscv64gc-unknown-none-elf/release/null_task");
-
 extern "C" fn kmain() -> ! {
     *lsd::FDT_PTR.lock() = FDT.response().unwrap().dtb_ptr as usize;
     *lsd::KERN_PHYS.lock() = KERN_PHYS.response().unwrap().phys;
@@ -58,10 +55,10 @@ extern "C" fn kmain() -> ! {
     
     use lsd::traps::task::Privilege;
 
-    let id = lsd::userspace::load(NULL_TASK, Privilege::Guest);
-    println!("Loaded null task with id 0x{id:x}");
-    let id = lsd::userspace::load(USER_PROG, Privilege::Root);
-    println!("Loaded user program task with id 0x{id:x}");
+    unsafe {lsd::userspace::init_task_queues()};
+    let task = lsd::userspace::load(lsd::USER_PROG, Privilege::Root);
+    println!("Loaded user program task with id 0x{:x}", task.task_id);
+    lsd::traps::task::new_task(task);
     lsd::timing::Unit::MilliSeconds(10).set().unwrap();
     lsd::userspace::start_tasks();
 
@@ -109,13 +106,7 @@ fn smp_init() {
     for core in SMP.response().unwrap().cpus() {
         let hart_id = core.hartid;
         if hart_id != SMP.response().unwrap().bsp_hartid {
-            println!("Making new upperhalf for new cpu");
-            let new_satp = lsd::memory::vmm::new_with_upperhalf() as u64;
-            let new_satp_phys = new_satp - lsd::memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-
-            let mut satp = lsd::memory::vmm::Satp::new();
-            satp.set_ppn(new_satp_phys >> 12);
-            satp.set_mode(9);
+            let satp = lsd::memory::vmm::Satp::new();
 
             unsafe {
                 CORE_INIT.satp = core::mem::transmute(satp);
@@ -139,17 +130,21 @@ fn smp_init() {
 #[no_mangle]
 pub unsafe extern "C" fn core_main(smpinfo: &limine::SmpInfo) -> ! {
     core::arch::asm!("
+        .option push
+        .option norelax
+        lla gp, __global_pointer$
+        .option pop
+
         ld t0, 32(a0)
         ld t1, 8(t0)
 
         csrw satp, t1
+        sfence.vma
 
         ld sp, 0(t0)
 
         lla t0, stvec_trap_shim
         csrw stvec, t0
-
-        lla gp, __global_pointer$
     ");
 
     lsd::memory::init_tls();
@@ -160,7 +155,8 @@ pub unsafe extern "C" fn core_main(smpinfo: &limine::SmpInfo) -> ! {
 
     CORE_INIT.claimed.store(true, core::sync::atomic::Ordering::Relaxed);
 
-    loop {
-        core::arch::riscv64::pause();
-    }
+    lsd::userspace::init_task_queues();
+    lsd::userspace::start_tasks();
+
+    unreachable!("How the hell did we get here");
 }

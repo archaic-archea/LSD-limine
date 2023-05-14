@@ -48,10 +48,16 @@ pub fn kernel_io(trap_frame: &mut crate::traps::TrapFrame) {
         2 => {
             use crate::traps::task;
 
-            INPUT_AWAIT_LIST.lock().push(
-                task::CURRENT_USER_TASK.read().current_task().task_id
-            );
-            task::CURRENT_USER_TASK.write().current_task_mut().waiting_on = task::WaitSrc::CharIn;
+            INPUT_AWAIT_LIST.lock().push( {
+                let task_queues = crate::traps::task::TASK_QUEUES.read();
+                let read = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].read();
+                read.current_task().task_id
+            });
+
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let mut write = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].write();
+            write.current_task_mut().waiting_on = task::WaitSrc::CharIn;
+
             task::advance_task(trap_frame);
         },
         subcall => panic!("Unrecognized io subcall 0x{:x} trapframe: \n{:#x?}", subcall, trap_frame)
@@ -71,7 +77,8 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
                 pmm::REGION_LIST.lock().claim() as u64 - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed)
             });
 
-            let read = crate::traps::task::CURRENT_USER_TASK.read();
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let read = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].read();
 
             let cur_task = read.current_task();
             let vaddr = cur_task.vmm.alloc(frames * 0x1000, vmem::AllocStrategy::NextFit).unwrap() as u64;
@@ -114,9 +121,10 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
         },
         2 => {
             crate::traps::task::update_current(trap_frame);
-            let mut read = crate::traps::task::CURRENT_USER_TASK.write();
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let mut write = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].write();
 
-            let cur_task = read.current_task_mut();
+            let cur_task = write.current_task_mut();
             trap_frame.a2 = 0;
 
             let mut task_clone = *cur_task;
@@ -156,11 +164,12 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
             cur_task.trap_frame.a0 = cur_task.task_id;
             cur_task.trap_frame.a1 = task_clone.thread_id;
 
-            core::mem::drop(read);
+            core::mem::drop(write);
             crate::traps::task::new_task(task_clone);
         },
         3 => {
-            let read = crate::traps::task::CURRENT_USER_TASK.read();
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let read = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].read();
             let index = read.cur_task_idx;
             core::mem::drop(read);
 
@@ -169,14 +178,17 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
             crate::traps::task::drop_task(index);
         },
         4 => {
-            let read = crate::traps::task::CURRENT_USER_TASK.read();
+            println!("Dropping task");
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let read = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].read();
             let current = read.current_task();
             let id = current.task_id;
             core::mem::drop(read);
 
             crate::traps::task::advance_task(trap_frame);
 
-            let write = crate::traps::task::CURRENT_USER_TASK.write();
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let write = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].write();
 
             for (index, entry) in write.queue.iter().rev().enumerate() {
                 if entry.task_id == id {
@@ -194,7 +206,9 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
 
                 trap_frame.a0 = rtc as usize;
             } else {
-                let mut write = crate::traps::task::CURRENT_USER_TASK.write();
+                crate::traps::task::update_current(trap_frame);
+                let task_queues = crate::traps::task::TASK_QUEUES.read();
+                let mut write = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].write();
                 let current = write.current_task_mut();
 
                 current.waiting_on = crate::traps::task::WaitSrc::Time(trap_frame.a2 as u64);
@@ -205,7 +219,8 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
         },
         6 => {
             crate::traps::task::update_current(trap_frame);
-            let mut write = crate::traps::task::CURRENT_USER_TASK.write();
+            let task_queues = crate::traps::task::TASK_QUEUES.read();
+            let mut write = task_queues[crate::traps::task::TASK_LOCK_INDEX.load(core::sync::atomic::Ordering::Relaxed)].write();
 
             let thread_id = core::num::NonZeroUsize::new(trap_frame.a3);
 
