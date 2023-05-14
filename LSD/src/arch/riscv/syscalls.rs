@@ -121,9 +121,37 @@ pub fn kernel_task(trap_frame: &mut crate::traps::TrapFrame) {
 
             let mut task_clone = *cur_task;
             task_clone.thread_id = task_clone.thread_manager.alloc(1, vmem::AllocStrategy::NextFit).unwrap();
-            task_clone.trap_frame.a2 = 1;
+
+            use crate::memory::{self, vmm, pmm};
+
+            let level = vmm::PageLevel::from_usize(vmm::LEVELS.load(core::sync::atomic::Ordering::Relaxed) as usize);
+            let table = (task_clone.task_table.get_ppn() << 12) + memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+
+            let stack = pmm::REGION_LIST.lock().claim_aligned(0x800, vmm::PageSize::Medium).unwrap();
+            let stack_paddr = (stack as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
+            let stack_vaddr = task_clone.vmm.alloc(0x80_0001, vmem::AllocStrategy::NextFit).unwrap() as u64;
+        
+            for i in (0..0x80_0000).step_by(vmm::PageSize::Medium as usize) {
+                let flags = vmm::PageFlags::READ | vmm::PageFlags::WRITE | vmm::PageFlags::USER;
+        
+                let virt = memory::VirtualAddress(stack_vaddr + i);
+                let phys = memory::PhysicalAddress(stack_paddr + i);
+                unsafe {
+                    vmm::map(
+                        table as *mut vmm::PageTable, 
+                        virt, 
+                        phys, 
+                        level, 
+                        vmm::PageLevel::Level2, 
+                        &mut pmm::REGION_LIST.lock(), 
+                        flags
+                    )
+                }
+            }
+
             task_clone.trap_frame.a0 = task_clone.task_id;
             task_clone.trap_frame.a1 = task_clone.thread_id;
+            task_clone.trap_frame.a2 = 1;
 
             cur_task.trap_frame.a0 = cur_task.task_id;
             cur_task.trap_frame.a1 = task_clone.thread_id;

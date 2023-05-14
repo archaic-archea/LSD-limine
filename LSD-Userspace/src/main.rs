@@ -11,9 +11,12 @@ use std::println;
 pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
 
-    let extend = std::raw_calls::extend_heap(0x1000);
+    let join_handle = std::thread::spawn_thread(thread);
+    let _ = join_handle.join();
+}
 
-    println!("Extended heap location: {:?}", extend);
+fn thread(task_id: usize, thread_id: usize) {
+    println!("New thread running task 0x{:x} thread 0x{:x}", task_id, thread_id);
     loop {}
 }
 
@@ -27,8 +30,6 @@ unsafe extern "C" fn _entry() -> ! {
         .option norelax
         lla gp, __global_pointer$
         .option pop
-
-        lla sp, __stack_top
 
         jal lsd_main
 

@@ -87,7 +87,7 @@ pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> usize {
         None
     );
 
-    for i in 1..=256 {
+    for i in 2..=256 {
         unsafe {
             let entry = &(*new_table).0[i];
             let mut vaddr = memory::VirtualAddress(0);
@@ -104,9 +104,7 @@ pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> usize {
 
     let stack = pmm::REGION_LIST.lock().claim_aligned(0x800, vmm::PageSize::Medium).unwrap();
     let stack_paddr = (stack as u64) - memory::HHDM_OFFSET.load(core::sync::atomic::Ordering::Relaxed);
-    let stack_vaddr = task_vmm.alloc(0x80_0000, vmem::AllocStrategy::NextFit).unwrap() as u64;
-
-    println!("Physical address of new stack: 0x{:x}", stack_paddr);
+    let stack_vaddr = task_vmm.alloc(0x80_0001, vmem::AllocStrategy::NextFit).unwrap() as u64;
 
     for i in (0..0x80_0000).step_by(vmm::PageSize::Medium as usize) {
         let flags = vmm::PageFlags::READ | vmm::PageFlags::WRITE | vmm::PageFlags::USER;
@@ -153,14 +151,14 @@ pub fn load(bytes: &[u8], privilege: crate::traps::task::Privilege) -> usize {
         trap_frame: traps::TrapFrame::default(),
         task_id,
         task_table,
-        privilege: task::Privilege::User,
+        privilege,
         waiting_on: task::WaitSrc::None,
         thread_id: leaked_tm.alloc(1, vmem::AllocStrategy::NextFit).unwrap(),
         thread_manager: leaked_tm,
         vmm: leaked_vmm
     };
 
-    task_data.trap_frame.sp = stack_vaddr as usize;
+    task_data.trap_frame.sp = (stack_vaddr + 0x80_0000) as usize;
     println!("Loading program with stack at {:?}", task_data.trap_frame.sp());
 
     task_data.trap_frame.sepc = elfbytes.ehdr.e_entry as usize;

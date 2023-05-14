@@ -412,6 +412,7 @@ pub unsafe extern "C" fn stvec_trap_shim() -> ! {
         sd t5, 240(sp)
         ld tp, 8(t6)
         ld gp, 16(t6)
+
         // Swap `t6` and `sscratch` again
         csrrw t6, sscratch, t6
         sd t6, 248(sp)

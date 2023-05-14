@@ -201,7 +201,6 @@ impl<T: ?Sized> core::ops::DerefMut for DmaRegion<T> {
 }
 
 impl<T: ?Sized> core::ops::Drop for DmaRegion<T> {
-    // TODO: dealloc memory
     fn drop(&mut self) {
         unsafe {
             crate::LOWER_HALF.free_constrained(self.virt.addr().get(), self.size);

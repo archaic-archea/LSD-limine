@@ -69,10 +69,10 @@ pub unsafe fn init(map: &limine::MemoryMap, hhdm_start: u64, hart_id: usize, dtb
     }
     memory::pmm::init(map);
     memory::init_tls();
-    traps::init();
     HART_ID.store(hart_id, core::sync::atomic::Ordering::Relaxed);
     println!("Hart ID: {hart_id}");
     memory::vmm::init();
+    traps::init();
 
     unsafe {
         vmem::bootstrap()

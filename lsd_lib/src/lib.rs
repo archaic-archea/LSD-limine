@@ -3,7 +3,21 @@
 
 pub mod time;
 pub mod raw_calls;
-//pub mod thread;
+pub mod thread;
+
+use linked_list_allocator::LockedHeap;
+
+#[global_allocator]
+static ALLOCATOR: LockedHeap = LockedHeap::empty();
+
+pub fn init_alloc() {
+    let heap = raw_calls::extend_heap(0x8000);
+    let heap_start = heap;
+    let heap_size = 0x8000;
+    unsafe {
+        ALLOCATOR.lock().init(heap_start, heap_size);
+    }
+}
 
 struct RootPrinter;
 
