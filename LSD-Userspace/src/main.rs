@@ -6,12 +6,16 @@
 )]
 
 use std::println;
+use std::alloc::alloc;
 
 #[no_mangle]
 pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
 
-    std::thread::spawn_thread(|_, _| {println!("Thread")});
+    let byte = unsafe {alloc::alloc(alloc::Layout::new::<u8>())};
+
+    println!("Allocated byte: {:?}", byte);
+    //0x400012a6
 }
 
 #[naked]
