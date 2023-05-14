@@ -6,12 +6,11 @@
 )]
 
 use std::println;
-use std::alloc::alloc;
 
 #[no_mangle]
 pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
-    let byte = unsafe {alloc::alloc_zeroed(alloc::Layout::new::<u8>())};
+    let byte = unsafe {std::alloc::alloc_zeroed(std::alloc::Layout::new::<u8>())};
     println!("Byte: {byte:?}")
 }
 

@@ -19,8 +19,8 @@ pub fn spawn_thread<T>(f: fn(usize, usize) -> T) -> JoinHandle<T> {
     let ids = unsafe {raw_calls::spawn_thread_raw()};
 
     if ids.2 {
-        let boxed = alloc::boxed::Box::new(f(ids.0, ids.1));
-        let leaked = alloc::boxed::Box::leak(boxed);
+        let boxed = crate::boxed::Box::new(f(ids.0, ids.1));
+        let leaked = crate::boxed::Box::leak(boxed);
         unsafe {raw_calls::drop_thread(leaked)};
     } else {
         JoinHandle {
