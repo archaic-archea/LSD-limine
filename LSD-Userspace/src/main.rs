@@ -12,6 +12,8 @@ pub extern "C" fn lsd_main(task_id: usize) {
     println!("Task running 0x{:x}", task_id);
 
     let join_handle = std::thread::spawn_thread(thread);
+    let join_handle = std::thread::spawn_thread(thread);
+    let join_handle = std::thread::spawn_thread(thread);
     let _ = join_handle.join();
 }
 
