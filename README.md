@@ -1,15 +1,2 @@
-## RISC-V Barebones
-This is a small repository to act as a barebones start for RISC-V OSDev
-
-## Running
-```
-$ git clone https://github.com/archaic-archea/risc-v-bare
-$ cd risc-v-bare
-$ cargo xtask run
-```
-## Building
-```
-$ git clone https://github.com/archaic-archea/risc-v-bare
-$ cd risc-v-bare
-$ cargo xtask build
-```
+## LSD
+LSD, or Lilly's Software Distribution, is a Unix-like Operating System intended for learning, its still not finished, but will no longer be my focus, but it will remain here for others to examine.
